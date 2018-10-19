@@ -12,13 +12,18 @@ PerspectiveProjection = namedtuple('PerspectiveProjection',
 
 class Camera:
 
-    def __init__(self, pos=None, target=None, up=None):
+    def __init__(self, pos=None, target=None):
         self.pos = pos if pos else Vector3f(0.0, 0.0, 0.0)
 
-        self.target = target if target else Vector3f(0.0, 0.0, 1.0)
-        self.target.normalize()
-        self.up = up if up else Vector3f(0.0, 1.0, 0.0)
-        self.up.normalize()
+        htarget = Vector3f(target.x, 0, target.z)
+        htarget.normalize()
+        self.angle_h = degrees(atan2(htarget.z, -htarget.x)) + 180
+        self.angle_v = degrees(asin(self.target.y))
+
+    def mouse(self, dx, dy):
+        self.angle_h += dx / 20.0
+        self.angle_v += dy / 20.0
+
 
     def keyboard(self, key, x, y):
         speed = 0.1
@@ -34,6 +39,29 @@ class Camera:
             right = self.up.cross(self.target)
             right.normalize()
             self.pos += right * speed
+
+    def to_camera_transform_matrix(self):
+        target = Vector3f(1.0, 0.0, 0.0)
+        h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.angle_h)
+        target = h_rot.rotate(target)
+        
+        h_axis = UP.cross(target)
+        v_rot = Quaternion.from_vector_and_angle(h_axis, self.angle_v)
+        target = v_rot.rotate(target)
+
+        n = target
+        u = UP.cross(target)
+        u.normalize()
+        v = n.cross(u)
+        
+        m = Matrix4f()
+        m[0] = [u.x, u.y, u.z, 0]
+        m[1] = [v.x, v.y, v.z, 0]
+        m[2] = [n.x, n.y, n.z, 0]
+        m[3][3] = 1.0
+        return m
+
+
 
 
 class Quaternion:
@@ -152,6 +180,8 @@ class Vector3f:
     def __repr__(self):
         return f"Vector3f(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f})"
 
+    UP = Vector3f(0.0, 1.0, 0.0)
+
 
 def to_scale_matrix(v):
     m = Matrix4f()
@@ -220,21 +250,6 @@ def to_perspective_projection_matrix(projection):
     m[2][2] = (-z_near - z_far) / z_range
     m[2][3] = 2.0 * z_far * z_near / z_range
     m[3][2] = 1.0
-    return m
-
-
-def to_camera_transform_matrix(target, up):
-    n = target.copy()
-    n.normalize()
-    u = up.cross(target)
-    u.normalize()
-    v = n.cross(u)
-    
-    m = Matrix4f()
-    m[0] = [u.x, u.y, u.z, 0]
-    m[1] = [v.x, v.y, v.z, 0]
-    m[2] = [n.x, n.y, n.z, 0]
-    m[3][3] = 1.0
     return m
 
 
