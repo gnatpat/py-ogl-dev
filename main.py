@@ -10,6 +10,35 @@ from ctypes import *
 PerspectiveProjection = namedtuple('PerspectiveProjection',
                                    ['fov', 'width', 'height', 'z_near', 'z_far'])
 
+
+def get_window_width():
+    return glutGet(GLUT_WINDOW_WIDTH)
+
+def get_window_height():
+    return glutGet(GLUT_WINDOW_HEIGHT)
+
+
+class MouseTrap:
+
+    def __init__(self, camera):
+        self.camera = camera
+        self.mouse_x = get_window_width()//2
+        self.mouse_y = get_window_height()//2
+        glutWarpPointer(self.mouse_x, self.mouse_y)
+
+    def mouse(self, x, y):
+        dx, self.mouse_x = x - self.mouse_x, x
+        dy, self.mouse_y = y - self.mouse_y, y
+
+        self.camera.mouse(dx, dy)
+
+        mid_x, mid_y = get_window_width()//2, get_window_height()//2
+        distance_from_centre = sqrt((x - mid_x)**2 + (y - mid_y)**2)
+        if distance_from_centre > (get_window_width()//10):
+            self.mouse_x = mid_x
+            self.mouse_y = mid_y
+            glutWarpPointer(mid_x, mid_y)
+
 class Camera:
 
     def __init__(self, pos=None, target=None):
@@ -18,39 +47,31 @@ class Camera:
         htarget = Vector3f(target.x, 0, target.z)
         htarget.normalize()
         self.angle_h = degrees(atan2(htarget.z, -htarget.x)) + 180
-        self.angle_v = degrees(asin(self.target.y))
+        self.angle_v = degrees(asin(target.y))
 
     def mouse(self, dx, dy):
         self.angle_h += dx / 20.0
         self.angle_v += dy / 20.0
 
-
     def keyboard(self, key, x, y):
+        target = self._get_target_vector()
         speed = 0.1
         if key == GLUT_KEY_UP:
-            self.pos += self.target * speed
+            self.pos += target * speed
         if key == GLUT_KEY_DOWN:
-            self.pos += self.target * -speed
+            self.pos += target * -speed
         if key == GLUT_KEY_LEFT:
-            left = self.target.cross(self.up)
+            left = target.cross(Vector3f.UP)
             left.normalize()
             self.pos += left * speed
         if key == GLUT_KEY_RIGHT:
-            right = self.up.cross(self.target)
+            right = self.up.cross(target)
             right.normalize()
             self.pos += right * speed
 
     def to_camera_transform_matrix(self):
-        target = Vector3f(1.0, 0.0, 0.0)
-        h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.angle_h)
-        target = h_rot.rotate(target)
-        
-        h_axis = UP.cross(target)
-        v_rot = Quaternion.from_vector_and_angle(h_axis, self.angle_v)
-        target = v_rot.rotate(target)
-
-        n = target
-        u = UP.cross(target)
+        n = self._get_target_vector()
+        u = Vector3f.UP.cross(n)
         u.normalize()
         v = n.cross(u)
         
@@ -61,6 +82,16 @@ class Camera:
         m[3][3] = 1.0
         return m
 
+    def _get_target_vector(self):
+        target = Vector3f(1.0, 0.0, 0.0)
+
+        h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.angle_h)
+        target = h_rot.rotate(target)
+
+        h_axis = Vector3f.UP.cross(target)
+        v_rot = Quaternion.from_vector_and_angle(h_axis, self.angle_v)
+        target = v_rot.rotate(target)
+        return target
 
 
 
@@ -73,13 +104,13 @@ class Quaternion:
         self.w = w
 
     def conj(self):
-        return Quaternion(-self.x, -self.y, -self.z, w)
+        return Quaternion(-self.x, -self.y, -self.z, self.w)
 
     def rotate(self, v):
         return ((self * v) * self.conj())._to_vec()
 
     @classmethod
-    def from_vector_and_angle(v, theta_deg):
+    def from_vector_and_angle(cls, v, theta_deg):
         theta = radians(theta_deg)
         q = Quaternion(v.x * sin(theta/2),
                        v.y * sin(theta/2),
@@ -97,10 +128,13 @@ class Quaternion:
             return NotImplemented
         q0, q1, q2, q3 = self.w, self.x, self.y, self.z
         r0, r1, r2, r3 = other.w, other.x, other.y, other.z
-        return Quaternion(x=r0*q1 + r1*q1 - r2*q3 + r3*q2,
+        return Quaternion(x=r0*q1 + r1*q0 - r2*q3 + r3*q2,
                           y=r0*q2 + r1*q3 + r2*q0 - r3*q1,
-                          z=r0*q1 - r1*q2 + r2*q1 + r3*q0,
+                          z=r0*q3 - r1*q2 + r2*q1 + r3*q0,
                           w=r0*q0 - r1*q1 - r2*q2 - r3*q3)
+
+    def __repr__(self):
+        return f"Quaternion(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f}, w={self.w:2.2f})"
 
 
 class Matrix4f:
@@ -180,8 +214,9 @@ class Vector3f:
     def __repr__(self):
         return f"Vector3f(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f})"
 
-    UP = Vector3f(0.0, 1.0, 0.0)
-
+Vector3f.UP = Vector3f(0.0, 1.0, 0.0)
+Vector3f.FORWARD = Vector3f(0.0, 0.0, 1.0)
+Vector3f.ORIGIN = Vector3f(0.0, 0.0, 0.0)
 
 def to_scale_matrix(v):
     m = Matrix4f()
@@ -289,7 +324,7 @@ class Pipeline:
         translation_matrix = to_translation_matrix(self.world_pos)
 
         camera_translation_matrix = to_translation_matrix(-1.0 * self.camera.pos)
-        camera_rotation_matrix = to_camera_transform_matrix(self.camera.target, self.camera.up)
+        camera_rotation_matrix = self.camera.to_camera_transform_matrix()
 
         projection_matrix = to_perspective_projection_matrix(self.projection)
         return (projection_matrix * 
@@ -401,13 +436,13 @@ def keyboard(code, x, y):
         sys.exit(0)
     print(code)
 
-
 def main():
     glutInit(sys.argv)
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA)
-    #glutInitWindowSize(1024, 768)
-    #glutInitWindowPosition(100, 100)
+    glutInitWindowSize(1920, 1080)
     glutCreateWindow("Tutorial 10")
+    #glutGameModeString("1920x1080:32")
+    #glutEnterGameMode()
 
     print("GL version: %s" % glGetString(GL_VERSION))
 
@@ -415,15 +450,18 @@ def main():
 
     shader_program = compileShaders()
 
-    camera = Camera()
+    camera = Camera(target=Vector3f.FORWARD, pos=Vector3f.ORIGIN)
 
     game_manager = GameManager(shader_program, camera)
     game_manager.createBuffers()
+
+    mouse_trap = MouseTrap(camera)
 
     glutDisplayFunc(game_manager.render)
     glutIdleFunc(game_manager.render)
     glutKeyboardFunc(keyboard)
     glutSpecialFunc(camera.keyboard)
+    glutPassiveMotionFunc(mouse_trap.mouse)
 
     glutMainLoop()
 
