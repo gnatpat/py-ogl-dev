@@ -1,21 +1,53 @@
-from OpenGL.GL import *
-from OpenGL.GL import shaders
-from OpenGL.GLUT import *
-
 from collections import *
 import sys, time
 from math import *
 from ctypes import *
 
+from OpenGL.GL import *
+from OpenGL.GL import shaders
+from OpenGL.GLUT import *
+
+from PIL import Image
+
 PerspectiveProjection = namedtuple('PerspectiveProjection',
                                    ['fov', 'width', 'height', 'z_near', 'z_far'])
+
+Vertex = namedtuple('Vertex', ['position', 'uv'])
+
+def verticies_to_ctype(vertices):
+    raw_v = ((pos.x, pos.y, pos.z, uv[0], uv[1]) for pos, uv in vertices)
+    return (c_float * (len(vertices) * 5))(*[f for fs in raw_v for f in fs])
 
 
 def get_window_width():
     return glutGet(GLUT_WINDOW_WIDTH)
 
+
 def get_window_height():
     return glutGet(GLUT_WINDOW_HEIGHT)
+
+
+class Texture:
+
+    def __init__(self, texture_target, filename):
+        self.texture_target = texture_target
+
+        im = Image.open(filename)
+        width, height = im.size
+        pydata = [i for rgba in im.getdata() for i in rgba]
+        data = (c_ubyte * (4 * width * height))(*pydata)
+
+        self.texture_object = glGenTextures(1)
+        glBindTexture(texture_target, self.texture_object)
+        glTexImage2D(texture_target, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, data)
+
+        glTexParameterf(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameterf(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
+
+    def bind(self, texture_unit):
+        glActiveTexture(texture_unit)
+        glBindTexture(self.texture_target, self.texture_object)
 
 
 class MouseTrap:
@@ -171,9 +203,9 @@ class Matrix4f:
 class Vector3f:
 
     def __init__(self, x=0.0, y=0.0, z=0.0):
-        self.x = x
-        self.y = y
-        self.z = z
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
 
     def cross(self, other):
         x = self.y * other.z - self.z * other.y
@@ -357,7 +389,7 @@ class FPSCounter:
 
 class GameManager:
 
-    def __init__(self, shader_program, camera):
+    def __init__(self, shader_program, camera, texture):
         self.shader_program = shader_program
         self.vao = None
         self.vbo = None
@@ -365,6 +397,7 @@ class GameManager:
         self.camera = camera
         self.gWorldLocation = glGetUniformLocation(shader_program, "gWorld")
         self.t = 0
+        self.texture = texture
 
         self.fps = FPSCounter()
 
@@ -384,11 +417,17 @@ class GameManager:
         glUniformMatrix4fv(self.gWorldLocation, 1, GL_TRUE, byref(pipeline.bake().ctypes()))
 
         glEnableVertexAttribArray(0)
+        glEnableVertexAttribArray(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 0, None)
+
+        # Doing sizeof here is a bit hacky - would be good to set up the
+        # vertex class a bit more
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), None)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(12))
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
 
-        #glDrawArrays(GL_TRIANGLES, 0, 3)
+        self.texture.bind(GL_TEXTURE0)
+
         glDrawElements(GL_TRIANGLES, 12, GL_UNSIGNED_INT, None)
 
         glDisableVertexAttribArray(0)
@@ -398,21 +437,21 @@ class GameManager:
         self.fps.frame()
 
     def createBuffers(self):
-        #self.vao = glGenVertexArrays(1)
-        #glBindVertexArray(self.vao)
+        self.vao = glGenVertexArrays(1)
+        glBindVertexArray(self.vao)
 
-        #vertices = (c_float * 9)(-1.0, -1.0, 0.0, 1.0, -1.0, 0.0, 0.0, 1.0, 0.0)
-        vertices = (c_float * 16)(-1, -1, 0.5773, 
-                                   0, -1, -1.15475,
-                                   1, -1, 0.5773,
-                                   0, 1, 0)
+        vertices = [
+                Vertex(Vector3f(-1, -1, 0.5773), (0.0, 0.0)),
+                Vertex(Vector3f(0, -1, -1.15475), (0.5, 0.0)),
+                Vertex(Vector3f(1, -1, 0.5773), (1.0, 0.0)),
+                Vertex(Vector3f(0, 1, 0), (0.5, 1.0))]
 
         self.vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, vertices, GL_STATIC_DRAW)
+        glBufferData(GL_ARRAY_BUFFER, verticies_to_ctype(vertices),
+                     GL_STATIC_DRAW)
 
         indices = (c_int * 16)(0, 3, 1, 1, 3, 2, 2, 3, 0, 0, 1, 2)
-        #indices = (c_uint * 3)(0, 1, 2)
         self.ibo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
@@ -447,12 +486,19 @@ def main():
     print("GL version: %s" % glGetString(GL_VERSION))
 
     glClearColor(0.0, 0.0, 0.0, 0.0)
+    glFrontFace(GL_CW)
+    glCullFace(GL_BACK)
+    glEnable(GL_CULL_FACE)
 
     shader_program = compileShaders()
+    gSampler = glGetUniformLocation(shader_program, "gSampler")
+    glUniform1i(gSampler, 0)
 
     camera = Camera(target=Vector3f.FORWARD, pos=Vector3f.ORIGIN)
 
-    game_manager = GameManager(shader_program, camera)
+    texture = Texture(GL_TEXTURE_2D, "test.png")
+
+    game_manager = GameManager(shader_program, camera, texture)
     game_manager.createBuffers()
 
     mouse_trap = MouseTrap(camera)

@@ -1,0 +1,2 @@
+pyopengl
+pillow==5.3.0
