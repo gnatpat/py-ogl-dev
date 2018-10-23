@@ -4,7 +4,7 @@ from math import *
 from ctypes import *
 
 from OpenGL.GL import *
-from OpenGL.GL import shaders
+from OpenGL.GL import shaders as ogl_shaders
 from OpenGL.GLUT import *
 
 from PIL import Image
@@ -250,6 +250,7 @@ Vector3f.UP = Vector3f(0.0, 1.0, 0.0)
 Vector3f.FORWARD = Vector3f(0.0, 0.0, 1.0)
 Vector3f.ORIGIN = Vector3f(0.0, 0.0, 0.0)
 
+
 def to_scale_matrix(v):
     m = Matrix4f()
     m[0][0] = v.x
@@ -387,17 +388,23 @@ class FPSCounter:
     def fps(self):
         return self.last_reading
 
+
 class GameManager:
 
-    def __init__(self, shader_program, camera, texture):
-        self.shader_program = shader_program
+    def __init__(self, camera, texture, mouse_trap):
         self.vao = None
         self.vbo = None
         self.ibo = None
         self.camera = camera
-        self.gWorldLocation = glGetUniformLocation(shader_program, "gWorld")
+        self.mouse_trap = mouse_trap
         self.t = 0
         self.texture = texture
+
+        self.technique = LightingTechnique()
+        self.technique.enable()
+        self.technique.set_texture_unit(0)
+
+        self.directional_light = DirectionalLight(Vector3f(1.0, 1.0, 1.0), 0.5)
 
         self.fps = FPSCounter()
 
@@ -414,7 +421,8 @@ class GameManager:
                                   1.0,
                                   1000.0))
         
-        glUniformMatrix4fv(self.gWorldLocation, 1, GL_TRUE, byref(pipeline.bake().ctypes()))
+        self.technique.set_wvp(byref(pipeline.bake().ctypes()))
+        self.technique.set_directional_light(self.directional_light)
 
         glEnableVertexAttribArray(0)
         glEnableVertexAttribArray(1)
@@ -435,6 +443,20 @@ class GameManager:
         glutSwapBuffers()
 
         self.fps.frame()
+
+    def keyboard(self, code, x, y):
+        if code == b'q':
+            sys.exit(0)
+        if code == b'a':
+            new = self.directional_light.ambient_intensity - 0.1
+            self.directional_light = self.directional_light._replace(ambient_intensity=new)
+        if code == b'd':
+            new = self.directional_light.ambient_intensity + 0.1
+            self.directional_light = self.directional_light._replace(ambient_intensity=new)
+
+
+    def mouse(self, x, y):
+        self.mouse_trap.mouse(x, y)
 
     def createBuffers(self):
         self.vao = glGenVertexArrays(1)
@@ -457,31 +479,79 @@ class GameManager:
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
 
 
-def compileShaders():
-    with open('shader.vs') as f:
-        vertex_shader_text = f.read()
-    with open('shader.fs') as f:
-        fragment_shader_text = f.read()
-
-    vertex_shader = shaders.compileShader(vertex_shader_text, GL_VERTEX_SHADER)
-    fragment_shader = shaders.compileShader(fragment_shader_text, GL_FRAGMENT_SHADER)
-    shader_program = shaders.compileProgram(vertex_shader, fragment_shader)
-    glUseProgram(shader_program)
-    return shader_program
+Shader = namedtuple('Shader', ['file', 'type'])
 
 
-def keyboard(code, x, y):
-    if code == b'q':
-        sys.exit(0)
-    print(code)
+def _compile_shader(shader):
+    with open(shader.file) as f:
+        shader_text = f.read()
+    return ogl_shaders.compileShader(shader_text, shader.type)
 
-def main():
+
+class Technique:
+
+    def __init__(self, shaders):
+        compiled_shaders = [_compile_shader(shader) for shader in shaders]
+        self.shader_program = ogl_shaders.compileProgram(*compiled_shaders)
+        for shader in compiled_shaders:
+            glDeleteShader(shader)
+
+    def enable(self):
+        glUseProgram(self.shader_program)
+
+    def get_uniform_location(self, name):
+        return glGetUniformLocation(self.shader_program, name)
+
+
+DirectionalLight = namedtuple('DirectionalLight', ['colour', 'ambient_intensity'])
+
+
+class LightingTechnique(Technique):
+
+    def __init__(self):
+        super().__init__([Shader('shader.vs', GL_VERTEX_SHADER),
+                          Shader('shader.fs', GL_FRAGMENT_SHADER)])
+        self.wvp_location = self.get_uniform_location('gWVP')
+        self.sampler_location = self.get_uniform_location('gSampler')
+        self.dir_light_color_location = self.get_uniform_location('gDirectionalLight.Color')
+        self.dir_light_ambient_intensity = self.get_uniform_location('gDirectionalLight.AmbientIntensity')
+
+    def set_wvp(self, wvp):
+        glUniformMatrix4fv(self.wvp_location, 1, GL_TRUE, wvp)
+
+    def set_texture_unit(self, texture_unit):
+        glUniform1i(self.sampler_location, texture_unit)
+
+    def set_directional_light(self, directional_light):
+        glUniform3f(self.dir_light_color_location, directional_light.colour.x, directional_light.colour.y, directional_light.colour.z)
+        glUniform1f(self.dir_light_ambient_intensity, directional_light.ambient_intensity)
+
+
+def glut_init():
     glutInit(sys.argv)
     glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA)
-    glutInitWindowSize(1920, 1080)
-    glutCreateWindow("Tutorial 10")
-    #glutGameModeString("1920x1080:32")
-    #glutEnterGameMode()
+
+
+def glut_create_window(width=1920, height=1820, is_full_screen=False):
+    if is_full_screen:
+        glutGameModeString("%d:%d:32@60" % (width, height))
+        glutEnterGameMode()
+    else:
+        glutInitWindowSize(width, height)
+        glutCreateWindow("Python OpenGL playground")
+
+
+def init_callbacks(game_manager):
+    glutDisplayFunc(game_manager.render)
+    glutIdleFunc(game_manager.render)
+    glutKeyboardFunc(game_manager.keyboard)
+    glutSpecialFunc(game_manager.keyboard)
+    glutPassiveMotionFunc(game_manager.mouse)
+
+
+def main():
+    glut_init()
+    glut_create_window()
 
     print("GL version: %s" % glGetString(GL_VERSION))
 
@@ -490,25 +560,15 @@ def main():
     glCullFace(GL_BACK)
     glEnable(GL_CULL_FACE)
 
-    shader_program = compileShaders()
-    gSampler = glGetUniformLocation(shader_program, "gSampler")
-    glUniform1i(gSampler, 0)
-
-    camera = Camera(target=Vector3f.FORWARD, pos=Vector3f.ORIGIN)
-
     texture = Texture(GL_TEXTURE_2D, "test.png")
 
-    game_manager = GameManager(shader_program, camera, texture)
+    camera = Camera(target=Vector3f.FORWARD, pos=Vector3f.ORIGIN)
+    mouse_trap = MouseTrap(camera)
+    game_manager = GameManager(camera, texture, mouse_trap)
     game_manager.createBuffers()
 
-    mouse_trap = MouseTrap(camera)
 
-    glutDisplayFunc(game_manager.render)
-    glutIdleFunc(game_manager.render)
-    glutKeyboardFunc(keyboard)
-    glutSpecialFunc(camera.keyboard)
-    glutPassiveMotionFunc(mouse_trap.mouse)
-
+    init_callbacks(game_manager)
     glutMainLoop()
 
 

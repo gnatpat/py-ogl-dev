@@ -4,9 +4,18 @@ in vec2 TexCoord0;
 
 out vec4 FragColor;
 
+struct DirectionalLight
+{
+  vec3 Color;
+  float AmbientIntensity;
+};
+
+uniform DirectionalLight gDirectionalLight;
 uniform sampler2D gSampler;
 
 void main()
 {
-    FragColor = texture2D(gSampler, TexCoord0.st);
+    FragColor = texture2D(gSampler, TexCoord0.st) *
+      vec4(gDirectionalLight.Color, 1.0f) *
+      gDirectionalLight.AmbientIntensity;
 }
