@@ -12,11 +12,44 @@ from PIL import Image
 PerspectiveProjection = namedtuple('PerspectiveProjection',
                                    ['fov', 'width', 'height', 'z_near', 'z_far'])
 
-Vertex = namedtuple('Vertex', ['position', 'uv'])
+Vertex = namedtuple('Vertex', ['position', 'uv', 'normal'])
+
+
+def chunk(iterable, chunk_size):
+    chunk = []
+    for item in iterable:
+        chunk.append(item)
+        if len(chunk) == chunk_size:
+            yield chunk
+            chunk = []
+    if chunk:
+        yield chunk
+
+
+def calc_normals(positions, triangle_indices):
+    normals = [Vector3f() for _ in range(len(positions))]
+    for triangle in triangle_indices:
+        v1 = positions[triangle[1]] - positions[triangle[0]]
+        v2 = positions[triangle[2]] - positions[triangle[0]]
+
+        normal = v1.cross(v2)
+        normal.normalize()
+
+        normals[triangle[0]] += normal
+        normals[triangle[1]] += normal
+        normals[triangle[2]] += normal
+
+    for normal in normals:
+        normal.normalize()
+
+    print(positions)
+    print(normals)
+    return normals
+
 
 def verticies_to_ctype(vertices):
-    raw_v = ((pos.x, pos.y, pos.z, uv[0], uv[1]) for pos, uv in vertices)
-    return (c_float * (len(vertices) * 5))(*[f for fs in raw_v for f in fs])
+    raw_v = ((pos.x, pos.y, pos.z, uv[0], uv[1], normal.x, normal.y, normal.z) for pos, uv, normal in vertices)
+    return (c_float * (len(vertices) * 8))(*[f for fs in raw_v for f in fs])
 
 
 def get_window_width():
@@ -97,7 +130,7 @@ class Camera:
             left.normalize()
             self.pos += left * speed
         if key == GLUT_KEY_RIGHT:
-            right = self.up.cross(target)
+            right = Vector3f.UP.cross(target)
             right.normalize()
             self.pos += right * speed
 
@@ -352,17 +385,20 @@ class Pipeline:
         self.camera = camera
 
     def bake(self):
-        scale_matrix = to_scale_matrix(self.scale)
-        rotation_matrix = to_rotation_matrix(self.rotate)
-        translation_matrix = to_translation_matrix(self.world_pos)
-
         camera_translation_matrix = to_translation_matrix(-1.0 * self.camera.pos)
         camera_rotation_matrix = self.camera.to_camera_transform_matrix()
 
         projection_matrix = to_perspective_projection_matrix(self.projection)
         return (projection_matrix * 
                 camera_rotation_matrix * camera_translation_matrix * 
-                translation_matrix * rotation_matrix * scale_matrix)
+                self.world_transformation())
+
+    def world_transformation(self):
+        scale_matrix = to_scale_matrix(self.scale)
+        rotation_matrix = to_rotation_matrix(self.rotate)
+        translation_matrix = to_translation_matrix(self.world_pos)
+
+        return translation_matrix * rotation_matrix * scale_matrix
 
 
 class FPSCounter:
@@ -404,7 +440,7 @@ class GameManager:
         self.technique.enable()
         self.technique.set_texture_unit(0)
 
-        self.directional_light = DirectionalLight(Vector3f(1.0, 1.0, 1.0), 0.5)
+        self.directional_light = DirectionalLight(Vector3f(1.0, 1.0, 1.0), 0.01, Vector3f(1.0, 0, 0), 0.75)
 
         self.fps = FPSCounter()
 
@@ -423,15 +459,21 @@ class GameManager:
         
         self.technique.set_wvp(byref(pipeline.bake().ctypes()))
         self.technique.set_directional_light(self.directional_light)
+        self.technique.set_world_matrix(pipeline.world_transformation().ctypes())
+        self.technique.set_eye_world_pos(self.camera.pos)
+        self.technique.set_mat_specular_intensity(1.0)
+        self.technique.set_specular_power(32)
 
         glEnableVertexAttribArray(0)
         glEnableVertexAttribArray(1)
+        glEnableVertexAttribArray(2)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
 
         # Doing sizeof here is a bit hacky - would be good to set up the
         # vertex class a bit more
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), None)
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(12))
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), None)
+        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(12))
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(20))
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
 
         self.texture.bind(GL_TEXTURE0)
@@ -439,6 +481,8 @@ class GameManager:
         glDrawElements(GL_TRIANGLES, 12, GL_UNSIGNED_INT, None)
 
         glDisableVertexAttribArray(0)
+        glDisableVertexAttribArray(1)
+        glDisableVertexAttribArray(2)
 
         glutSwapBuffers()
 
@@ -453,6 +497,7 @@ class GameManager:
         if code == b'd':
             new = self.directional_light.ambient_intensity + 0.1
             self.directional_light = self.directional_light._replace(ambient_intensity=new)
+        self.camera.keyboard(code, x, y)
 
 
     def mouse(self, x, y):
@@ -462,18 +507,30 @@ class GameManager:
         self.vao = glGenVertexArrays(1)
         glBindVertexArray(self.vao)
 
-        vertices = [
-                Vertex(Vector3f(-1, -1, 0.5773), (0.0, 0.0)),
-                Vertex(Vector3f(0, -1, -1.15475), (0.5, 0.0)),
-                Vertex(Vector3f(1, -1, 0.5773), (1.0, 0.0)),
-                Vertex(Vector3f(0, 1, 0), (0.5, 1.0))]
+        positions = [
+                Vector3f(-1, -1, 0.5773),
+                Vector3f(0, -1, -1.15475),
+                Vector3f(1, -1, 0.5773),
+                Vector3f(0, 1, 0)]
+
+        indices = [0, 3, 1, 1, 3, 2, 2, 3, 0, 0, 1, 2]
+
+        normals = calc_normals(positions, chunk(indices, 3))
+
+        uvs = [(0.0, 0.0),
+               (0.5, 0.0),
+               (1.0, 0.0),
+               (0.5, 1.0)]
+
+        vertices = [Vertex(position, uv, normal)
+                    for (position, uv, normal) in zip(positions, uvs, normals)]
 
         self.vbo = glGenBuffers(1)
         glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
         glBufferData(GL_ARRAY_BUFFER, verticies_to_ctype(vertices),
                      GL_STATIC_DRAW)
 
-        indices = (c_int * 16)(0, 3, 1, 1, 3, 2, 2, 3, 0, 0, 1, 2)
+        indices = (c_int * 16)(*indices)
         self.ibo = glGenBuffers(1)
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
@@ -500,10 +557,17 @@ class Technique:
         glUseProgram(self.shader_program)
 
     def get_uniform_location(self, name):
-        return glGetUniformLocation(self.shader_program, name)
+        location = glGetUniformLocation(self.shader_program, name)
+        assert location != -1
+        return location
 
 
-DirectionalLight = namedtuple('DirectionalLight', ['colour', 'ambient_intensity'])
+DirectionalLight = namedtuple(
+        'DirectionalLight',
+        ['colour',
+         'ambient_intensity',
+         'direction',
+         'diffuse_intensity'])
 
 
 class LightingTechnique(Technique):
@@ -512,9 +576,18 @@ class LightingTechnique(Technique):
         super().__init__([Shader('shader.vs', GL_VERTEX_SHADER),
                           Shader('shader.fs', GL_FRAGMENT_SHADER)])
         self.wvp_location = self.get_uniform_location('gWVP')
+        self.world_location = self.get_uniform_location('gWorld')
+
         self.sampler_location = self.get_uniform_location('gSampler')
+
         self.dir_light_color_location = self.get_uniform_location('gDirectionalLight.Color')
         self.dir_light_ambient_intensity = self.get_uniform_location('gDirectionalLight.AmbientIntensity')
+        self.direction = self.get_uniform_location('gDirectionalLight.Direction')
+        self.diffuse_intensity = self.get_uniform_location('gDirectionalLight.DiffuseIntensity')
+
+        self.eye_world_pos = self.get_uniform_location('gEyeWorldPos')
+        self.specular_intensity = self.get_uniform_location('gMatSpecularIntensity')
+        self.specular_power = self.get_uniform_location('gSpecularPower')
 
     def set_wvp(self, wvp):
         glUniformMatrix4fv(self.wvp_location, 1, GL_TRUE, wvp)
@@ -522,9 +595,34 @@ class LightingTechnique(Technique):
     def set_texture_unit(self, texture_unit):
         glUniform1i(self.sampler_location, texture_unit)
 
+    def set_world_matrix(self, world_transformation):
+        glUniformMatrix4fv(self.world_location, 1, GL_TRUE, world_transformation)
+
     def set_directional_light(self, directional_light):
-        glUniform3f(self.dir_light_color_location, directional_light.colour.x, directional_light.colour.y, directional_light.colour.z)
+        glUniform3f(self.dir_light_color_location,
+                    directional_light.colour.x,
+                    directional_light.colour.y,
+                    directional_light.colour.z)
+
+        glUniform3f(self.direction,
+                    directional_light.direction.x,
+                    directional_light.direction.y,
+                    directional_light.direction.z)
+
         glUniform1f(self.dir_light_ambient_intensity, directional_light.ambient_intensity)
+        glUniform1f(self.diffuse_intensity, directional_light.diffuse_intensity)
+
+    def set_eye_world_pos(self, eye_world_pos):
+        glUniform3f(self.eye_world_pos,
+                    eye_world_pos.x,
+                    eye_world_pos.y,
+                    eye_world_pos.z)
+
+    def set_mat_specular_intensity(self, intensity):
+        glUniform1f(self.specular_intensity, intensity)
+
+    def set_specular_power(self, power):
+        glUniform1f(self.specular_power, power)
 
 
 def glut_init():
