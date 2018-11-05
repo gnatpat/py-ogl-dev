@@ -240,6 +240,10 @@ class Matrix4f:
     def ctypes(self):
         return (c_float * 16)(*self.values)
 
+Matrix4f.IDENTITY = Matrix4f([1, 0, 0, 0,
+                              0, 1, 0, 0,
+                              0, 0, 1, 0,
+                              0, 0, 0, 1])
 
 class Vector3f:
 
@@ -574,6 +578,9 @@ class ShaderProgram:
         if isinstance(value, float):
             glUniform1f(location, value)
             return
+        if isinstance(value, Matrix4f):
+            glUniformMatrix4fv(location, 1, GL_TRUE, value.ctypes())
+            return
         raise ValueError('tried to set uniform location in shader of bad type')
 
 
@@ -669,10 +676,10 @@ def gen_square_buffer():
 
 def gen_textured_square_buffer():
     vertices = [
-         0.5,  0.5, 0.0,    1.0, 0.0, 0.0,  1.0, 1.0,
-         0.5, -0.5, 0.0,    0.0, 1.0, 0.0,  1.0, 0.0,
-        -0.5, -0.5, 0.0,    0.0, 0.0, 1.0,  0.0, 0.0,
-        -0.5,  0.5, 0.0,    1.0, 1.0, 0.0,  0.0, 1.0
+         0.5,  0.5, 0.0,  1.0, 1.0,
+         0.5, -0.5, 0.0,  1.0, 0.0,
+        -0.5, -0.5, 0.0,  0.0, 0.0,
+        -0.5,  0.5, 0.0,  0.0, 1.0
                 ]
 
     indices = [
@@ -691,12 +698,10 @@ def gen_textured_square_buffer():
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, (c_uint * len(indices))(*indices), GL_STATIC_DRAW)
 
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(0))
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(12))
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(24))
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(0))
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(12))
     glEnableVertexAttribArray(0)
     glEnableVertexAttribArray(1)
-    glEnableVertexAttribArray(2)
 
     return vao
 
@@ -707,6 +712,7 @@ def main():
     window = glfw_create_window()
     glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
     print("GL version: %s" % glGetString(GL_VERSION))
+
     basic_shader = ShaderProgram('shader_texture.vs', 'shader_texture.fs')
     basic_shader.use()
     basic_shader.set('texture1', 0)
@@ -719,21 +725,20 @@ def main():
 
     t = 0
     while not glfw.window_should_close(window):
-        t += 0.01
+        t += 1
         process_input(window)
 
-        glClearColor(0.0, 1.0, 0.0, 1.0)
+        glClearColor(0.0, 0.0, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT)
 
         basic_shader.use()
-        basic_shader.set('offset', sin(t))
-        basic_shader.set('mix_value', (sin(t*3)+1.0)/2.0)
 
         container_texture.bind(GL_TEXTURE0)
         awesomeface_texture.bind(GL_TEXTURE1)
 
         glBindVertexArray(textured_square)
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+
+        st(basic_shader, Vector3f(0, -0.5, 0), 5, 2.0)
 
         glBindVertexArray(0)
 
@@ -743,6 +748,18 @@ def main():
     glfw.terminate();
     return
 
+def st(basic_shader, pos, depth, scale=1):
+    transform = Matrix4f.IDENTITY
+    transform *= to_translation_matrix(pos)
+    transform *= to_scale_matrix(Vector3f(scale * 0.25, scale * 0.25, 0))
+    basic_shader.set('transform', transform)
+
+    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
+
+    if depth > 0:
+        st(basic_shader, pos + 0.25 * scale * Vector3f(0, 1, 0), depth - 1, scale/2)
+        st(basic_shader, pos + 0.25 * scale * Vector3f(cos(radians(30)), -sin(radians(30)), 0), depth - 1, scale/2)
+        st(basic_shader, pos + 0.25 * scale * Vector3f(-cos(radians(30)), -sin(radians(30)), 0), depth - 1, scale/2)
 
 if __name__ == "__main__":
     main()
