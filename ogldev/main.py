@@ -5,8 +5,7 @@ from ctypes import *
 
 from OpenGL.GL import *
 from OpenGL.GL import shaders as ogl_shaders
-
-import glfw
+from OpenGL.GLUT import *
 
 from PIL import Image
 
@@ -63,32 +62,25 @@ def get_window_height():
 
 class Texture:
 
-    def __init__(self, filename, has_alpha=True, flip=True):
-        components = 4 if has_alpha else 3
-        mode = GL_RGBA if has_alpha else GL_RGB
+    def __init__(self, texture_target, filename):
+        self.texture_target = texture_target
 
         im = Image.open(filename)
-        if flip:
-            im = im.transpose(Image.FLIP_TOP_BOTTOM)
         width, height = im.size
         pydata = [i for rgba in im.getdata() for i in rgba]
-        data = (c_ubyte * (components * width * height))(*pydata)
+        data = (c_ubyte * (4 * width * height))(*pydata)
 
         self.texture_object = glGenTextures(1)
-        glBindTexture(GL_TEXTURE_2D, self.texture_object)
+        glBindTexture(texture_target, self.texture_object)
+        glTexImage2D(texture_target, 0, GL_RGBA, width, height, 0,
+                     GL_RGBA, GL_UNSIGNED_BYTE, data)
 
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_REPEAT);	
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_REPEAT);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-        glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-
-        glTexImage2D(GL_TEXTURE_2D, 0, mode, width, height, 0,
-                     mode, GL_UNSIGNED_BYTE, data)
-        #glGenerateMipmap(GL_TEXTURE_2D)
+        glTexParameterf(texture_target, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
+        glTexParameterf(texture_target, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
 
     def bind(self, texture_unit):
         glActiveTexture(texture_unit)
-        glBindTexture(GL_TEXTURE_2D, self.texture_object)
+        glBindTexture(self.texture_target, self.texture_object)
 
 
 class MouseTrap:
@@ -544,204 +536,138 @@ class GameManager:
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
 
 
-class ShaderProgram:
-
-    def __init__(self, vertex_path, fragment_path):
-        vertex_shader = _compile_shader(vertex_path, GL_VERTEX_SHADER)
-        fragment_shader = _compile_shader(fragment_path, GL_FRAGMENT_SHADER)
-
-        shader_program = glCreateProgram()
-        glAttachShader(shader_program, vertex_shader)
-        glAttachShader(shader_program, fragment_shader)
-        glLinkProgram(shader_program)
-        if not glGetProgramiv(shader_program, GL_LINK_STATUS):
-            raise RuntimeError(glGetProgramInfoLog(shader_program))
-        self.id = shader_program
-
-        glDeleteShader(vertex_shader)
-        glDeleteShader(fragment_shader)
-
-    def use(self):
-        glUseProgram(self.id)
-
-    def set(self, name, value):
-        location = glGetUniformLocation(self.id, name)
-        if location == -1:
-            raise ValueError(f'{name} does not exist in shader.')
-        if isinstance(value, (bool, int)):
-            glUniform1i(location, value)
-            return
-        if isinstance(value, float):
-            glUniform1f(location, value)
-            return
-        raise ValueError('tried to set uniform location in shader of bad type')
-
-
 Shader = namedtuple('Shader', ['file', 'type'])
 
 
-def _compile_shader(shader_file, shader_type):
-    with open(shader_file) as f:
+def _compile_shader(shader):
+    with open(shader.file) as f:
         shader_text = f.read()
-    return ogl_shaders.compileShader(shader_text, shader_type)
+    return ogl_shaders.compileShader(shader_text, shader.type)
 
 
-def glfw_init():
-    glfw.init()
-    glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
-    glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
-    glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+class Technique:
+
+    def __init__(self, shaders):
+        compiled_shaders = [_compile_shader(shader) for shader in shaders]
+        self.shader_program = ogl_shaders.compileProgram(*compiled_shaders)
+        for shader in compiled_shaders:
+            glDeleteShader(shader)
+
+    def enable(self):
+        glUseProgram(self.shader_program)
+
+    def get_uniform_location(self, name):
+        location = glGetUniformLocation(self.shader_program, name)
+        assert location != -1
+        return location
 
 
-def glfw_create_window():
-    window = glfw.create_window(800, 600, "LearnOpenGL", None, None)
-    glfw.make_context_current(window)
-    glViewport(0, 0, 800, 600)
-    return window
+DirectionalLight = namedtuple(
+        'DirectionalLight',
+        ['colour',
+         'ambient_intensity',
+         'direction',
+         'diffuse_intensity'])
 
 
-def framebuffer_size_callback(window, width, height):
-    glViewport(0, 0, width, height)
+class LightingTechnique(Technique):
+
+    def __init__(self):
+        super().__init__([Shader('shader.vs', GL_VERTEX_SHADER),
+                          Shader('shader.fs', GL_FRAGMENT_SHADER)])
+        self.wvp_location = self.get_uniform_location('gWVP')
+        self.world_location = self.get_uniform_location('gWorld')
+
+        self.sampler_location = self.get_uniform_location('gSampler')
+
+        self.dir_light_color_location = self.get_uniform_location('gDirectionalLight.Color')
+        self.dir_light_ambient_intensity = self.get_uniform_location('gDirectionalLight.AmbientIntensity')
+        self.direction = self.get_uniform_location('gDirectionalLight.Direction')
+        self.diffuse_intensity = self.get_uniform_location('gDirectionalLight.DiffuseIntensity')
+
+        self.eye_world_pos = self.get_uniform_location('gEyeWorldPos')
+        self.specular_intensity = self.get_uniform_location('gMatSpecularIntensity')
+        self.specular_power = self.get_uniform_location('gSpecularPower')
+
+    def set_wvp(self, wvp):
+        glUniformMatrix4fv(self.wvp_location, 1, GL_TRUE, wvp)
+
+    def set_texture_unit(self, texture_unit):
+        glUniform1i(self.sampler_location, texture_unit)
+
+    def set_world_matrix(self, world_transformation):
+        glUniformMatrix4fv(self.world_location, 1, GL_TRUE, world_transformation)
+
+    def set_directional_light(self, directional_light):
+        glUniform3f(self.dir_light_color_location,
+                    directional_light.colour.x,
+                    directional_light.colour.y,
+                    directional_light.colour.z)
+
+        glUniform3f(self.direction,
+                    directional_light.direction.x,
+                    directional_light.direction.y,
+                    directional_light.direction.z)
+
+        glUniform1f(self.dir_light_ambient_intensity, directional_light.ambient_intensity)
+        glUniform1f(self.diffuse_intensity, directional_light.diffuse_intensity)
+
+    def set_eye_world_pos(self, eye_world_pos):
+        glUniform3f(self.eye_world_pos,
+                    eye_world_pos.x,
+                    eye_world_pos.y,
+                    eye_world_pos.z)
+
+    def set_mat_specular_intensity(self, intensity):
+        glUniform1f(self.specular_intensity, intensity)
+
+    def set_specular_power(self, power):
+        glUniform1f(self.specular_power, power)
 
 
-def process_input(window):
-    if glfw.get_key(window, glfw.KEY_Q) == glfw.PRESS:
-        glfw.set_window_should_close(window, True)
+def glut_init():
+    glutInit(sys.argv)
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGBA)
 
 
-def gen_triangle_buffer():
-    vertices = [
-            -1, -1, 0.0,
-             0.0, -1, 0.0,
-             -0.5,  0.0, 0.0
-               ]
-    indices = [
-            0, 1, 2
-              ]
-    vao = glGenVertexArrays(1)
-    vbo, ebo = glGenBuffers(2)
-
-    glBindVertexArray(vao)
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    glBufferData(GL_ARRAY_BUFFER, (c_float * 9)(*vertices), GL_STATIC_DRAW)
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (c_uint * 6)(*indices), GL_STATIC_DRAW)
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(c_float), c_void_p(0))
-    glEnableVertexAttribArray(0)
-
-    glBindVertexArray(0)
-    return vao
+def glut_create_window(width=1920, height=1820, is_full_screen=False):
+    if is_full_screen:
+        glutGameModeString("%d:%d:32@60" % (width, height))
+        glutEnterGameMode()
+    else:
+        glutInitWindowSize(width, height)
+        glutCreateWindow("Python OpenGL playground")
 
 
-def gen_square_buffer():
-    vertices = [
-             0.5,  0.5, 0.0,
-             0.5, -0.5, 0.0,
-            -0.5, -0.5, 0.0,
-            -0.5,  0.5, 0.0
-                ]
-
-    indices = [
-            3, 1, 0,
-            3, 2, 1
-              ]
-
-    vao = glGenVertexArrays(1)
-    vbo = glGenBuffers(1)
-    ebo = glGenBuffers(1)
-
-    glBindVertexArray(vao)
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    glBufferData(GL_ARRAY_BUFFER, (c_float * 12)(*vertices), GL_STATIC_DRAW)
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (c_uint * 6)(*indices), GL_STATIC_DRAW)
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 3 * sizeof(c_float), c_void_p(0))
-    glEnableVertexAttribArray(0)
-
-    return vao
-
-
-
-def gen_textured_square_buffer():
-    vertices = [
-         0.5,  0.5, 0.0,    1.0, 0.0, 0.0,  1.0, 1.0,
-         0.5, -0.5, 0.0,    0.0, 1.0, 0.0,  1.0, 0.0,
-        -0.5, -0.5, 0.0,    0.0, 0.0, 1.0,  0.0, 0.0,
-        -0.5,  0.5, 0.0,    1.0, 1.0, 0.0,  0.0, 1.0
-                ]
-
-    indices = [
-            3, 1, 0,
-            3, 2, 1
-              ]
-
-    vao = glGenVertexArrays(1)
-    vbo, ebo = glGenBuffers(2)
-
-    glBindVertexArray(vao)
-
-    glBindBuffer(GL_ARRAY_BUFFER, vbo)
-    glBufferData(GL_ARRAY_BUFFER, (c_float * len(vertices))(*vertices), GL_STATIC_DRAW)
-
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, ebo)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, (c_uint * len(indices))(*indices), GL_STATIC_DRAW)
-
-    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(0))
-    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(12))
-    glVertexAttribPointer(2, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(24))
-    glEnableVertexAttribArray(0)
-    glEnableVertexAttribArray(1)
-    glEnableVertexAttribArray(2)
-
-    return vao
+def init_callbacks(game_manager):
+    glutDisplayFunc(game_manager.render)
+    glutIdleFunc(game_manager.render)
+    glutKeyboardFunc(game_manager.keyboard)
+    glutSpecialFunc(game_manager.keyboard)
+    glutPassiveMotionFunc(game_manager.mouse)
 
 
 def main():
-    glfw_init()
+    glut_init()
+    glut_create_window()
 
-    window = glfw_create_window()
-    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
     print("GL version: %s" % glGetString(GL_VERSION))
-    basic_shader = ShaderProgram('shader_texture.vs', 'shader_texture.fs')
-    basic_shader.use()
-    basic_shader.set('texture1', 0)
-    basic_shader.set('texture2', 1)
 
-    container_texture = Texture('container.jpg', has_alpha=False, flip=False)
-    awesomeface_texture = Texture('awesomeface.png')
+    glClearColor(0.0, 0.0, 0.0, 0.0)
+    glFrontFace(GL_CW)
+    glCullFace(GL_BACK)
+    glEnable(GL_CULL_FACE)
 
-    textured_square = gen_textured_square_buffer()
+    texture = Texture(GL_TEXTURE_2D, "test.png")
 
-    t = 0
-    while not glfw.window_should_close(window):
-        t += 0.01
-        process_input(window)
+    camera = Camera(target=Vector3f.FORWARD, pos=Vector3f.ORIGIN)
+    mouse_trap = MouseTrap(camera)
+    game_manager = GameManager(camera, texture, mouse_trap)
+    game_manager.createBuffers()
 
-        glClearColor(0.0, 1.0, 0.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT)
 
-        basic_shader.use()
-        basic_shader.set('offset', sin(t))
-        basic_shader.set('mix_value', (sin(t*3)+1.0)/2.0)
-
-        container_texture.bind(GL_TEXTURE0)
-        awesomeface_texture.bind(GL_TEXTURE1)
-
-        glBindVertexArray(textured_square)
-        glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
-
-        glBindVertexArray(0)
-
-        glfw.swap_buffers(window)
-        glfw.poll_events()
-
-    glfw.terminate();
-    return
+    init_callbacks(game_manager)
+    glutMainLoop()
 
 
 if __name__ == "__main__":
