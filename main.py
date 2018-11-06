@@ -112,35 +112,39 @@ class MouseTrap:
             self.mouse_y = mid_y
             glutWarpPointer(mid_x, mid_y)
 
+
 class Camera:
 
-    def __init__(self, pos=None, target=None):
+    def __init__(self, pos=None, target=None, sensitivity=0.1):
         self.pos = pos if pos else Vector3f(0.0, 0.0, 0.0)
+        self.sensitivity = sensitivity
 
         htarget = Vector3f(target.x, 0, target.z)
         htarget.normalize()
-        self.angle_h = degrees(atan2(htarget.z, -htarget.x)) + 180
-        self.angle_v = degrees(asin(target.y))
+        self.yaw = degrees(atan2(htarget.z, -htarget.x)) + 180
+        self.pitch = degrees(asin(target.y))
 
-    def mouse(self, dx, dy):
-        self.angle_h += dx / 20.0
-        self.angle_v += dy / 20.0
 
-    def keyboard(self, key, x, y):
+    def update(self, dt):
         target = self._get_target_vector()
-        speed = 0.1
-        if key == GLUT_KEY_UP:
-            self.pos += target * speed
-        if key == GLUT_KEY_DOWN:
-            self.pos += target * -speed
-        if key == GLUT_KEY_LEFT:
+        speed = 6
+        if INPUT.is_key_down(glfw.KEY_W):
+            self.pos += target * speed * dt
+        if INPUT.is_key_down(glfw.KEY_S):
+            self.pos += target * -speed * dt
+        if INPUT.is_key_down(glfw.KEY_A):
             left = target.cross(Vector3f.UP)
             left.normalize()
-            self.pos += left * speed
-        if key == GLUT_KEY_RIGHT:
+            self.pos += left * speed * dt
+        if INPUT.is_key_down(glfw.KEY_D):
             right = Vector3f.UP.cross(target)
             right.normalize()
-            self.pos += right * speed
+            self.pos += right * speed * dt
+
+        dx, dy = INPUT.dmouse
+
+        self.yaw += dx * self.sensitivity
+        self.pitch += dy * self.sensitivity
 
     def to_camera_transform_matrix(self):
         n = self._get_target_vector()
@@ -153,16 +157,17 @@ class Camera:
         m[1] = [v.x, v.y, v.z, 0]
         m[2] = [n.x, n.y, n.z, 0]
         m[3][3] = 1.0
-        return m
+
+        return m * to_translation_matrix(-1.0 * self.pos)
 
     def _get_target_vector(self):
         target = Vector3f(1.0, 0.0, 0.0)
 
-        h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.angle_h)
+        h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.yaw)
         target = h_rot.rotate(target)
 
         h_axis = Vector3f.UP.cross(target)
-        v_rot = Quaternion.from_vector_and_angle(h_axis, self.angle_v)
+        v_rot = Quaternion.from_vector_and_angle(h_axis, self.pitch)
         target = v_rot.rotate(target)
         return target
 
@@ -281,7 +286,7 @@ class Vector3f:
         return NotImplemented
 
     def __mul__(self, other):
-        if isinstance(other, float):
+        if isinstance(other, (float, int)):
             return Vector3f(other * self.x, other * self.y, other * self.z)
         return NotImplemented
 
@@ -548,6 +553,32 @@ class GameManager:
         glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
 
 
+class Input:
+
+    def __init__(self, window):
+        self.window = window
+        self.mouse_pos = None
+        self.dmouse = (0.0, 0.0)
+        self.dscroll = 0.0
+
+    def is_key_down(self, key):
+        return glfw.get_key(self.window, key) == glfw.PRESS
+
+    def update_end(self):
+        self.dmouse = (0.0, 0.0)
+        self.dscroll = 0.0
+
+    def mouse_callback(self, window, xpos, ypos):
+        old_mouse_pos = self.mouse_pos
+        self.mouse_pos = (xpos, ypos)
+        if not old_mouse_pos:
+            return 
+        self.dmouse = (self.mouse_pos[0] - old_mouse_pos[0], self.mouse_pos[1] - old_mouse_pos[1])
+
+    def scroll_callback(self, window, xoffset, yoffset):
+        self.dscroll = yoffset
+
+
 class ShaderProgram:
 
     def __init__(self, vertex_path, fragment_path):
@@ -603,17 +634,13 @@ def glfw_init():
 def glfw_create_window():
     window = glfw.create_window(800, 600, "LearnOpenGL", None, None)
     glfw.make_context_current(window)
+    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED);  
     glViewport(0, 0, 800, 600)
     return window
 
 
 def framebuffer_size_callback(window, width, height):
     glViewport(0, 0, width, height)
-
-
-def process_input(window):
-    if glfw.get_key(window, glfw.KEY_Q) == glfw.PRESS:
-        glfw.set_window_should_close(window, True)
 
 
 def gen_triangle_buffer():
@@ -706,12 +733,84 @@ def gen_textured_square_buffer():
     return vao
 
 
+def gen_textured_cube_buffer():
+    vertices = [
+            -0.5, -0.5, -0.5,  0.0, 0.0,
+             0.5, -0.5, -0.5,  1.0, 0.0,
+             0.5,  0.5, -0.5,  1.0, 1.0,
+             0.5,  0.5, -0.5,  1.0, 1.0,
+            -0.5,  0.5, -0.5,  0.0, 1.0,
+            -0.5, -0.5, -0.5,  0.0, 0.0,
+
+            -0.5, -0.5,  0.5,  0.0, 0.0,
+             0.5, -0.5,  0.5,  1.0, 0.0,
+             0.5,  0.5,  0.5,  1.0, 1.0,
+             0.5,  0.5,  0.5,  1.0, 1.0,
+            -0.5,  0.5,  0.5,  0.0, 1.0,
+            -0.5, -0.5,  0.5,  0.0, 0.0,
+
+            -0.5,  0.5,  0.5,  1.0, 0.0,
+            -0.5,  0.5, -0.5,  1.0, 1.0,
+            -0.5, -0.5, -0.5,  0.0, 1.0,
+            -0.5, -0.5, -0.5,  0.0, 1.0,
+            -0.5, -0.5,  0.5,  0.0, 0.0,
+            -0.5,  0.5,  0.5,  1.0, 0.0,
+
+             0.5,  0.5,  0.5,  1.0, 0.0,
+             0.5,  0.5, -0.5,  1.0, 1.0,
+             0.5, -0.5, -0.5,  0.0, 1.0,
+             0.5, -0.5, -0.5,  0.0, 1.0,
+             0.5, -0.5,  0.5,  0.0, 0.0,
+             0.5,  0.5,  0.5,  1.0, 0.0,
+
+            -0.5, -0.5, -0.5,  0.0, 1.0,
+             0.5, -0.5, -0.5,  1.0, 1.0,
+             0.5, -0.5,  0.5,  1.0, 0.0,
+             0.5, -0.5,  0.5,  1.0, 0.0,
+            -0.5, -0.5,  0.5,  0.0, 0.0,
+            -0.5, -0.5, -0.5,  0.0, 1.0,
+
+            -0.5,  0.5, -0.5,  0.0, 1.0,
+             0.5,  0.5, -0.5,  1.0, 1.0,
+             0.5,  0.5,  0.5,  1.0, 0.0,
+             0.5,  0.5,  0.5,  1.0, 0.0,
+            -0.5,  0.5,  0.5,  0.0, 0.0,
+            -0.5,  0.5, -0.5,  0.0, 1.0]
+
+    vao = glGenVertexArrays(1)
+    vbo = glGenBuffers(1)
+
+    glBindVertexArray(vao)
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
+    glBufferData(GL_ARRAY_BUFFER, (c_float * len(vertices))(*vertices), GL_STATIC_DRAW)
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(0))
+    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 5 * sizeof(c_float), c_void_p(12))
+    glEnableVertexAttribArray(0)
+    glEnableVertexAttribArray(1)
+
+    return vao
+
+INPUT = None
+
 def main():
     glfw_init()
 
     window = glfw_create_window()
-    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
     print("GL version: %s" % glGetString(GL_VERSION))
+
+    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
+
+    # A bit hacky?
+    global INPUT
+    INPUT = Input(window)
+    glfw.set_cursor_pos_callback(window, INPUT.mouse_callback)
+    glfw.set_scroll_callback(window, INPUT.scroll_callback)
+
+    glEnable(GL_DEPTH_TEST)
+
+    camera = Camera(Vector3f(0, 0, -3), Vector3f(0, 0, 1))
 
     basic_shader = ShaderProgram('shader_texture.vs', 'shader_texture.fs')
     basic_shader.use()
@@ -721,45 +820,66 @@ def main():
     container_texture = Texture('container.jpg', has_alpha=False, flip=False)
     awesomeface_texture = Texture('awesomeface.png')
 
-    textured_square = gen_textured_square_buffer()
+    cube = gen_textured_cube_buffer()
 
-    t = 0
+    cubes = [
+        Vector3f( 0.0,  0.0, 0.0), 
+        Vector3f( 2.0,  5.0, 15.0), 
+        Vector3f(-1.5, -2.2, 2.5),  
+        Vector3f(-3.8, -2.0, 12.3),  
+        Vector3f( 2.4, -0.4, 3.5),  
+        Vector3f(-1.7,  3.0, 7.5),  
+        Vector3f( 1.3, -2.0, 2.5),  
+        Vector3f( 1.5,  2.0, 2.5), 
+        Vector3f( 1.5,  0.2, 1.5), 
+        Vector3f(-1.3,  1.0, 1.5)]
+
+    last_time = time.time()
+    fov = 45.0
     while not glfw.window_should_close(window):
-        t += 1
-        process_input(window)
+        now = time.time()
+        dt = now - last_time
+        last_time = now
+
+        width, height = glfw.get_framebuffer_size(window)
+        camera.update(dt)
+        fov += INPUT.dscroll
+        fov = min(max(fov, 1.0), 90.0)
 
         glClearColor(0.0, 0.0, 0.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+
+        view = camera.to_camera_transform_matrix()
+        projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
 
         basic_shader.use()
+        basic_shader.set('view', view)
+        basic_shader.set('projection', projection)
 
         container_texture.bind(GL_TEXTURE0)
         awesomeface_texture.bind(GL_TEXTURE1)
 
-        glBindVertexArray(textured_square)
-
-        st(basic_shader, Vector3f(0, -0.5, 0), 5, 2.0)
+        glBindVertexArray(cube)
+        for i, cube_pos in enumerate(cubes):
+            model = to_translation_matrix(cube_pos)
+            basic_shader.set('model', model)
+            glDrawArrays(GL_TRIANGLES, 0, 36)
 
         glBindVertexArray(0)
 
         glfw.swap_buffers(window)
+
+        INPUT.update_end()
         glfw.poll_events()
+
+        if INPUT.is_key_down(glfw.KEY_Q):
+            glfw.set_window_should_close(window, True)
+
+
 
     glfw.terminate();
     return
 
-def st(basic_shader, pos, depth, scale=1):
-    transform = Matrix4f.IDENTITY
-    transform *= to_translation_matrix(pos)
-    transform *= to_scale_matrix(Vector3f(scale * 0.25, scale * 0.25, 0))
-    basic_shader.set('transform', transform)
-
-    glDrawElements(GL_TRIANGLES, 6, GL_UNSIGNED_INT, None)
-
-    if depth > 0:
-        st(basic_shader, pos + 0.25 * scale * Vector3f(0, 1, 0), depth - 1, scale/2)
-        st(basic_shader, pos + 0.25 * scale * Vector3f(cos(radians(30)), -sin(radians(30)), 0), depth - 1, scale/2)
-        st(basic_shader, pos + 0.25 * scale * Vector3f(-cos(radians(30)), -sin(radians(30)), 0), depth - 1, scale/2)
 
 if __name__ == "__main__":
     main()
