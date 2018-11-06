@@ -881,15 +881,10 @@ def main():
     cube = gen_cube_buffer()
     lamp = gen_cube_buffer()
 
-    lamp_pos = Vector3f(1.2, 1.0, -2.0)
-    lamp_model_matrix = to_translation_matrix(lamp_pos) * to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
-
-
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
     basic_shader.set("objectColor", Vector3f(1.0, 0.5, 0.31))
     basic_shader.set("lightColor", Vector3f(1.0, 1.0, 1.0))
-    basic_shader.set('lightPos', lamp_pos)
     lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
 
     fps = FPSCounter()
@@ -912,17 +907,20 @@ def main():
         view = camera.to_camera_transform_matrix()
         projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
 
+        lamp_pos = Vector3f(sin(now) * 5, 0, cos(now) * 5)
+
         cube_model_matrix = to_translation_matrix(Vector3f())
-        cube_model_matrix *= to_rotation_matrix(Vector3f(0, now * 20, 0))
+        # cube_model_matrix *= to_rotation_matrix(Vector3f(0, now * 20, 0))
         basic_shader.use()
         basic_shader.set('view', view)
         basic_shader.set('projection', projection)
         basic_shader.set('model', cube_model_matrix)
-        basic_shader.set('viewPos', camera.pos)
+        basic_shader.set('lightPos', lamp_pos)
 
         glBindVertexArray(cube)
         glDrawArrays(GL_TRIANGLES, 0, 36)
 
+        lamp_model_matrix = to_translation_matrix(lamp_pos) * to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
         lamp_shader.use()
         lamp_shader.set('view', view)
         lamp_shader.set('projection', projection)
