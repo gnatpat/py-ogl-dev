@@ -296,6 +296,9 @@ class Vector3f:
     def __repr__(self):
         return f"Vector3f(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f})"
 
+    def ctypes(self):
+        return (c_float*3)(self.x, self.y, self.z)
+
 Vector3f.UP = Vector3f(0.0, 1.0, 0.0)
 Vector3f.FORWARD = Vector3f(0.0, 0.0, 1.0)
 Vector3f.ORIGIN = Vector3f(0.0, 0.0, 0.0)
@@ -612,6 +615,9 @@ class ShaderProgram:
         if isinstance(value, Matrix4f):
             glUniformMatrix4fv(location, 1, GL_TRUE, value.ctypes())
             return
+        if isinstance(value, Vector3f):
+            glUniform3fv(location, 1, value.ctypes())
+            return
         raise ValueError('tried to set uniform location in shader of bad type')
 
 
@@ -792,6 +798,66 @@ def gen_textured_cube_buffer():
 
     return vao
 
+
+def gen_cube_buffer():
+    vertices = [
+            -0.5, -0.5, -0.5,  0.0,  0.0, -1.0,
+             0.5, -0.5, -0.5,  0.0,  0.0, -1.0,
+             0.5,  0.5, -0.5,  0.0,  0.0, -1.0,
+             0.5,  0.5, -0.5,  0.0,  0.0, -1.0,
+            -0.5,  0.5, -0.5,  0.0,  0.0, -1.0,
+            -0.5, -0.5, -0.5,  0.0,  0.0, -1.0,
+
+            -0.5, -0.5,  0.5,  0.0,  0.0,  1.0,
+             0.5, -0.5,  0.5,  0.0,  0.0,  1.0,
+             0.5,  0.5,  0.5,  0.0,  0.0,  1.0,
+             0.5,  0.5,  0.5,  0.0,  0.0,  1.0,
+            -0.5,  0.5,  0.5,  0.0,  0.0,  1.0,
+            -0.5, -0.5,  0.5,  0.0,  0.0,  1.0,
+
+            -0.5,  0.5,  0.5, -1.0,  0.0,  0.0,
+            -0.5,  0.5, -0.5, -1.0,  0.0,  0.0,
+            -0.5, -0.5, -0.5, -1.0,  0.0,  0.0,
+            -0.5, -0.5, -0.5, -1.0,  0.0,  0.0,
+            -0.5, -0.5,  0.5, -1.0,  0.0,  0.0,
+            -0.5,  0.5,  0.5, -1.0,  0.0,  0.0,
+
+             0.5,  0.5,  0.5,  1.0,  0.0,  0.0,
+             0.5,  0.5, -0.5,  1.0,  0.0,  0.0,
+             0.5, -0.5, -0.5,  1.0,  0.0,  0.0,
+             0.5, -0.5, -0.5,  1.0,  0.0,  0.0,
+             0.5, -0.5,  0.5,  1.0,  0.0,  0.0,
+             0.5,  0.5,  0.5,  1.0,  0.0,  0.0,
+
+            -0.5, -0.5, -0.5,  0.0, -1.0,  0.0,
+             0.5, -0.5, -0.5,  0.0, -1.0,  0.0,
+             0.5, -0.5,  0.5,  0.0, -1.0,  0.0,
+             0.5, -0.5,  0.5,  0.0, -1.0,  0.0,
+            -0.5, -0.5,  0.5,  0.0, -1.0,  0.0,
+            -0.5, -0.5, -0.5,  0.0, -1.0,  0.0,
+
+            -0.5,  0.5, -0.5,  0.0,  1.0,  0.0,
+             0.5,  0.5, -0.5,  0.0,  1.0,  0.0,
+             0.5,  0.5,  0.5,  0.0,  1.0,  0.0,
+             0.5,  0.5,  0.5,  0.0,  1.0,  0.0,
+            -0.5,  0.5,  0.5,  0.0,  1.0,  0.0,
+            -0.5,  0.5, -0.5,  0.0,  1.0,  0.0]
+
+    vao = glGenVertexArrays(1)
+    vbo = glGenBuffers(1)
+
+    glBindVertexArray(vao)
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
+    glBufferData(GL_ARRAY_BUFFER, (c_float * len(vertices))(*vertices), GL_STATIC_DRAW)
+
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(c_float), c_void_p(0))
+    glEnableVertexAttribArray(0)
+    glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, 6 * sizeof(c_float), c_void_p(12))
+    glEnableVertexAttribArray(1)
+
+    return vao
+
 INPUT = None
 
 def main():
@@ -812,58 +878,58 @@ def main():
 
     camera = Camera(Vector3f(0, 0, -3), Vector3f(0, 0, 1))
 
-    basic_shader = ShaderProgram('shader_texture.vs', 'shader_texture.fs')
+    cube = gen_cube_buffer()
+    lamp = gen_cube_buffer()
+
+    lamp_pos = Vector3f(1.2, 1.0, -2.0)
+    lamp_model_matrix = to_translation_matrix(lamp_pos) * to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
+
+
+    basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
-    basic_shader.set('texture1', 0)
-    basic_shader.set('texture2', 1)
+    basic_shader.set("objectColor", Vector3f(1.0, 0.5, 0.31))
+    basic_shader.set("lightColor", Vector3f(1.0, 1.0, 1.0))
+    basic_shader.set('lightPos', lamp_pos)
+    lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
 
-    container_texture = Texture('container.jpg', has_alpha=False, flip=False)
-    awesomeface_texture = Texture('awesomeface.png')
-
-    cube = gen_textured_cube_buffer()
-
-    cubes = [
-        Vector3f( 0.0,  0.0, 0.0), 
-        Vector3f( 2.0,  5.0, 15.0), 
-        Vector3f(-1.5, -2.2, 2.5),  
-        Vector3f(-3.8, -2.0, 12.3),  
-        Vector3f( 2.4, -0.4, 3.5),  
-        Vector3f(-1.7,  3.0, 7.5),  
-        Vector3f( 1.3, -2.0, 2.5),  
-        Vector3f( 1.5,  2.0, 2.5), 
-        Vector3f( 1.5,  0.2, 1.5), 
-        Vector3f(-1.3,  1.0, 1.5)]
+    fps = FPSCounter()
 
     last_time = time.time()
     fov = 45.0
     while not glfw.window_should_close(window):
+        fps.frame()
         now = time.time()
         dt = now - last_time
         last_time = now
+
+        glClearColor(0.0, 0.0, 0.0, 1.0)
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
         width, height = glfw.get_framebuffer_size(window)
         camera.update(dt)
         fov += INPUT.dscroll
         fov = min(max(fov, 1.0), 90.0)
-
-        glClearColor(0.0, 0.0, 0.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
         view = camera.to_camera_transform_matrix()
         projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
 
+        cube_model_matrix = to_translation_matrix(Vector3f())
+        cube_model_matrix *= to_rotation_matrix(Vector3f(0, now * 20, 0))
         basic_shader.use()
         basic_shader.set('view', view)
         basic_shader.set('projection', projection)
-
-        container_texture.bind(GL_TEXTURE0)
-        awesomeface_texture.bind(GL_TEXTURE1)
+        basic_shader.set('model', cube_model_matrix)
+        basic_shader.set('viewPos', camera.pos)
 
         glBindVertexArray(cube)
-        for i, cube_pos in enumerate(cubes):
-            model = to_translation_matrix(cube_pos)
-            basic_shader.set('model', model)
-            glDrawArrays(GL_TRIANGLES, 0, 36)
+        glDrawArrays(GL_TRIANGLES, 0, 36)
+
+        lamp_shader.use()
+        lamp_shader.set('view', view)
+        lamp_shader.set('projection', projection)
+        lamp_shader.set('model', lamp_model_matrix)
+
+        glBindVertexArray(lamp)
+        glDrawArrays(GL_TRIANGLES, 0, 36)
 
         glBindVertexArray(0)
 
