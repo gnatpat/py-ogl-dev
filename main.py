@@ -883,9 +883,15 @@ def main():
 
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
-    basic_shader.set("objectColor", Vector3f(1.0, 0.5, 0.31))
-    basic_shader.set("lightColor", Vector3f(1.0, 1.0, 1.0))
+    basic_shader.set("material.specular", Vector3f(0.5, 0.5, 0.5))
+    basic_shader.set("material.shininess", 32.0)
+
+    basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
+    basic_shader.set('light.diffuse', Vector3f(0.5, 0.5, 0.5))
+    basic_shader.set('light.specular', Vector3f(1.0, 1.0, 1.0))
+
     lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
+    lamp_pos = Vector3f(1.2, 1.0, 2.0)
 
     fps = FPSCounter()
 
@@ -896,6 +902,7 @@ def main():
         now = time.time()
         dt = now - last_time
         last_time = now
+        t = now
 
         glClearColor(0.0, 0.0, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
@@ -907,15 +914,20 @@ def main():
         view = camera.to_camera_transform_matrix()
         projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
 
-        lamp_pos = Vector3f(sin(now) * 5, 0, cos(now) * 5)
+        #lamp_pos = Vector3f(sin(now) * 5, 0, cos(now) * 5)
+        color = Vector3f(sin(t*2), sin(t*0.7), sin(t*1.3))
 
         cube_model_matrix = to_translation_matrix(Vector3f())
-        # cube_model_matrix *= to_rotation_matrix(Vector3f(0, now * 20, 0))
+
         basic_shader.use()
         basic_shader.set('view', view)
         basic_shader.set('projection', projection)
         basic_shader.set('model', cube_model_matrix)
-        basic_shader.set('lightPos', lamp_pos)
+        basic_shader.set('light.position', lamp_pos)
+        basic_shader.set('viewPos', camera.pos)
+
+        basic_shader.set("material.ambient", color * 0.1)
+        basic_shader.set("material.diffuse", color * 0.5)
 
         glBindVertexArray(cube)
         glDrawArrays(GL_TRIANGLES, 0, 36)
