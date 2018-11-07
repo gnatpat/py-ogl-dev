@@ -881,6 +881,7 @@ def main():
     camera = Camera(Vector3f(0, 0, -3), Vector3f(0, 0, 1))
 
     cube_vao = gen_cube_buffer()
+    lamp_vao = gen_cube_buffer()
 
     cubes = [
         Vector3f( 0.0,  0.0,  0.0),
@@ -895,6 +896,7 @@ def main():
         Vector3f(-1.3,  1.0, 1.5)
     ]
 
+    lamp_pos = Vector3f(-4.0, -1.0, 3)
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
     basic_shader.set("material.diffuse", 0)
@@ -904,10 +906,17 @@ def main():
     basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
     basic_shader.set('light.diffuse', Vector3f(0.5, 0.5, 0.5))
     basic_shader.set('light.specular', Vector3f(1.0, 1.0, 1.0))
-    basic_shader.set('light.direction', Vector3f(-0.2, -1.0, 0.3))
+    basic_shader.set('light.position', lamp_pos)
+    basic_shader.set('light.constant', 1.0)
+    basic_shader.set('light.linear', 0.09)
+    basic_shader.set('light.quadratic', 0.032)
 
     texture = Texture('container2.png')
     specular_texture = Texture('container2_specular.png')
+
+    lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
+    lamp_model_matrix = to_translation_matrix(lamp_pos)
+    lamp_model_matrix *= to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
 
     fps = FPSCounter()
 
@@ -948,6 +957,12 @@ def main():
             basic_shader.set('model', cube_model_matrix)
 
             glDrawArrays(GL_TRIANGLES, 0, 36)
+    
+        lamp_shader.use()
+        lamp_shader.set('view', view)
+        lamp_shader.set('projection', projection)
+        lamp_shader.set('model', lamp_model_matrix)
+        glDrawArrays(GL_TRIANGLES, 0, 36)
 
         glBindVertexArray(0)
 
