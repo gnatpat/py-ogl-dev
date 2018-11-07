@@ -880,8 +880,20 @@ def main():
 
     camera = Camera(Vector3f(0, 0, -3), Vector3f(0, 0, 1))
 
-    cube = gen_cube_buffer()
-    lamp = gen_cube_buffer()
+    cube_vao = gen_cube_buffer()
+
+    cubes = [
+        Vector3f( 0.0,  0.0,  0.0),
+        Vector3f( 2.0,  5.0, 15.0),
+        Vector3f(-1.5, -2.2, 2.5),
+        Vector3f(-3.8, -2.0, 12.3),
+        Vector3f( 2.4, -0.4, 3.5),
+        Vector3f(-1.7,  3.0, 7.5),
+        Vector3f( 1.3, -2.0, 2.5),
+        Vector3f( 1.5,  2.0, 2.5),
+        Vector3f( 1.5,  0.2, 1.5),
+        Vector3f(-1.3,  1.0, 1.5)
+    ]
 
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
@@ -892,9 +904,7 @@ def main():
     basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
     basic_shader.set('light.diffuse', Vector3f(0.5, 0.5, 0.5))
     basic_shader.set('light.specular', Vector3f(1.0, 1.0, 1.0))
-
-    lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
-    lamp_pos = Vector3f(1.2, 1.0, 2.0)
+    basic_shader.set('light.direction', Vector3f(-0.2, -1.0, 0.3))
 
     texture = Texture('container2.png')
     specular_texture = Texture('container2_specular.png')
@@ -920,31 +930,24 @@ def main():
         view = camera.to_camera_transform_matrix()
         projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
 
-        #lamp_pos = Vector3f(sin(now) * 5, 0, cos(now) * 5)
         color = Vector3f(sin(t*2), sin(t*0.7), sin(t*1.3))
-
-        cube_model_matrix = to_translation_matrix(Vector3f())
 
         basic_shader.use()
         basic_shader.set('view', view)
         basic_shader.set('projection', projection)
-        basic_shader.set('model', cube_model_matrix)
-        basic_shader.set('light.position', lamp_pos)
         basic_shader.set('viewPos', camera.pos)
 
         texture.bind(GL_TEXTURE0)
         specular_texture.bind(GL_TEXTURE1)
-        glBindVertexArray(cube)
-        glDrawArrays(GL_TRIANGLES, 0, 36)
+        glBindVertexArray(cube_vao)
 
-        lamp_model_matrix = to_translation_matrix(lamp_pos) * to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
-        lamp_shader.use()
-        lamp_shader.set('view', view)
-        lamp_shader.set('projection', projection)
-        lamp_shader.set('model', lamp_model_matrix)
+        for i, cube in enumerate(cubes):
+            angle = 20 * i
+            cube_model_matrix = to_translation_matrix(cube)
+            cube_model_matrix *= to_rotation_matrix(Vector3f(1.0, 0.3, -0.5) * angle)
+            basic_shader.set('model', cube_model_matrix)
 
-        glBindVertexArray(lamp)
-        glDrawArrays(GL_TRIANGLES, 0, 36)
+            glDrawArrays(GL_TRIANGLES, 0, 36)
 
         glBindVertexArray(0)
 
