@@ -126,7 +126,7 @@ class Camera:
 
 
     def update(self, dt):
-        target = self._get_target_vector()
+        target = self.get_target_vector()
         speed = 6
         if INPUT.is_key_down(glfw.KEY_W):
             self.pos += target * speed * dt
@@ -147,7 +147,7 @@ class Camera:
         self.pitch += dy * self.sensitivity
 
     def to_camera_transform_matrix(self):
-        n = self._get_target_vector()
+        n = self.get_target_vector()
         u = Vector3f.UP.cross(n)
         u.normalize()
         v = n.cross(u)
@@ -160,7 +160,7 @@ class Camera:
 
         return m * to_translation_matrix(-1.0 * self.pos)
 
-    def _get_target_vector(self):
+    def get_target_vector(self):
         target = Vector3f(1.0, 0.0, 0.0)
 
         h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.yaw)
@@ -896,7 +896,6 @@ def main():
         Vector3f(-1.3,  1.0, 1.5)
     ]
 
-    lamp_pos = Vector3f(-4.0, -1.0, 3)
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
     basic_shader.set("material.diffuse", 0)
@@ -906,17 +905,12 @@ def main():
     basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
     basic_shader.set('light.diffuse', Vector3f(0.5, 0.5, 0.5))
     basic_shader.set('light.specular', Vector3f(1.0, 1.0, 1.0))
-    basic_shader.set('light.position', lamp_pos)
     basic_shader.set('light.constant', 1.0)
     basic_shader.set('light.linear', 0.09)
     basic_shader.set('light.quadratic', 0.032)
 
     texture = Texture('container2.png')
     specular_texture = Texture('container2_specular.png')
-
-    lamp_shader = ShaderProgram('shader.vs', 'lamp_shader.fs')
-    lamp_model_matrix = to_translation_matrix(lamp_pos)
-    lamp_model_matrix *= to_scale_matrix(Vector3f(0.2, 0.2, 0.2))
 
     fps = FPSCounter()
 
@@ -945,6 +939,10 @@ def main():
         basic_shader.set('view', view)
         basic_shader.set('projection', projection)
         basic_shader.set('viewPos', camera.pos)
+        basic_shader.set('light.position', camera.pos)
+        basic_shader.set('light.direction', camera.get_target_vector())
+        basic_shader.set('light.cutOff', cos(radians(12.5)))
+        basic_shader.set('light.outerCutOff', cos(radians(17.5)))
 
         texture.bind(GL_TEXTURE0)
         specular_texture.bind(GL_TEXTURE1)
@@ -958,12 +956,6 @@ def main():
 
             glDrawArrays(GL_TRIANGLES, 0, 36)
     
-        lamp_shader.use()
-        lamp_shader.set('view', view)
-        lamp_shader.set('projection', projection)
-        lamp_shader.set('model', lamp_model_matrix)
-        glDrawArrays(GL_TRIANGLES, 0, 36)
-
         glBindVertexArray(0)
 
         glfw.swap_buffers(window)
