@@ -886,7 +886,7 @@ def main():
     basic_shader = ShaderProgram('shader.vs', 'shader.fs')
     basic_shader.use()
     basic_shader.set("material.diffuse", 0)
-    basic_shader.set("material.specular", Vector3f(0.5, 0.5, 0.5))
+    basic_shader.set("material.specular", 1)
     basic_shader.set("material.shininess", 32.0)
 
     basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
@@ -897,6 +897,8 @@ def main():
     lamp_pos = Vector3f(1.2, 1.0, 2.0)
 
     texture = Texture('container2.png')
+    specular_texture = Texture('container2_specular.png')
+
     fps = FPSCounter()
 
     last_time = time.time()
@@ -931,6 +933,7 @@ def main():
         basic_shader.set('viewPos', camera.pos)
 
         texture.bind(GL_TEXTURE0)
+        specular_texture.bind(GL_TEXTURE1)
         glBindVertexArray(cube)
         glDrawArrays(GL_TRIANGLES, 0, 36)
 
