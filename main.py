@@ -10,6 +10,9 @@ import glfw
 
 from PIL import Image
 
+SCREEN_WIDTH = 800
+SCREEN_HEIGHT = 600
+
 PerspectiveProjection = namedtuple('PerspectiveProjection',
                                    ['fov', 'width', 'height', 'z_near', 'z_far'])
 
@@ -89,28 +92,6 @@ class Texture:
     def bind(self, texture_unit):
         glActiveTexture(texture_unit)
         glBindTexture(GL_TEXTURE_2D, self.texture_object)
-
-
-class MouseTrap:
-
-    def __init__(self, camera):
-        self.camera = camera
-        self.mouse_x = get_window_width()//2
-        self.mouse_y = get_window_height()//2
-        glutWarpPointer(self.mouse_x, self.mouse_y)
-
-    def mouse(self, x, y):
-        dx, self.mouse_x = x - self.mouse_x, x
-        dy, self.mouse_y = y - self.mouse_y, y
-
-        self.camera.mouse(dx, dy)
-
-        mid_x, mid_y = get_window_width()//2, get_window_height()//2
-        distance_from_centre = sqrt((x - mid_x)**2 + (y - mid_y)**2)
-        if distance_from_centre > (get_window_width()//10):
-            self.mouse_x = mid_x
-            self.mouse_y = mid_y
-            glutWarpPointer(mid_x, mid_y)
 
 
 class Camera:
@@ -250,6 +231,7 @@ Matrix4f.IDENTITY = Matrix4f([1, 0, 0, 0,
                               0, 0, 1, 0,
                               0, 0, 0, 1])
 
+
 class Vector3f:
 
     def __init__(self, x=0.0, y=0.0, z=0.0):
@@ -298,6 +280,7 @@ class Vector3f:
 
     def ctypes(self):
         return (c_float*3)(self.x, self.y, self.z)
+
 
 Vector3f.UP = Vector3f(0.0, 1.0, 0.0)
 Vector3f.FORWARD = Vector3f(0.0, 0.0, 1.0)
@@ -447,113 +430,14 @@ class FPSCounter:
 
 class GameManager:
 
-    def __init__(self, camera, texture, mouse_trap):
-        self.vao = None
-        self.vbo = None
-        self.ibo = None
-        self.camera = camera
-        self.mouse_trap = mouse_trap
-        self.t = 0
-        self.texture = texture
-
-        self.technique = LightingTechnique()
-        self.technique.enable()
-        self.technique.set_texture_unit(0)
-
-        self.directional_light = DirectionalLight(Vector3f(1.0, 1.0, 1.0), 0.01, Vector3f(1.0, 0, 0), 0.75)
-
-        self.fps = FPSCounter()
+    def __init__(self):
+        pass
 
     def render(self):
-        glClear(GL_COLOR_BUFFER_BIT)
-        self.t += 1.0
-        pipeline = Pipeline(self.camera)
-        pipeline.set_rotation(0.0, self.t, 0.0)
-        pipeline.set_pos(0.0, 0.0, 3.0)
-        pipeline.set_perspective_projection(
-            PerspectiveProjection(30.0,
-                                  glutGet(GLUT_WINDOW_WIDTH),
-                                  glutGet(GLUT_WINDOW_HEIGHT),
-                                  1.0,
-                                  1000.0))
-        
-        self.technique.set_wvp(byref(pipeline.bake().ctypes()))
-        self.technique.set_directional_light(self.directional_light)
-        self.technique.set_world_matrix(pipeline.world_transformation().ctypes())
-        self.technique.set_eye_world_pos(self.camera.pos)
-        self.technique.set_mat_specular_intensity(1.0)
-        self.technique.set_specular_power(32)
+        pass
 
-        glEnableVertexAttribArray(0)
-        glEnableVertexAttribArray(1)
-        glEnableVertexAttribArray(2)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-
-        # Doing sizeof here is a bit hacky - would be good to set up the
-        # vertex class a bit more
-        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), None)
-        glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(12))
-        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, 8 * sizeof(c_float), c_void_p(20))
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
-
-        self.texture.bind(GL_TEXTURE0)
-
-        glDrawElements(GL_TRIANGLES, 12, GL_UNSIGNED_INT, None)
-
-        glDisableVertexAttribArray(0)
-        glDisableVertexAttribArray(1)
-        glDisableVertexAttribArray(2)
-
-        glutSwapBuffers()
-
-        self.fps.frame()
-
-    def keyboard(self, code, x, y):
-        if code == b'q':
-            sys.exit(0)
-        if code == b'a':
-            new = self.directional_light.ambient_intensity - 0.1
-            self.directional_light = self.directional_light._replace(ambient_intensity=new)
-        if code == b'd':
-            new = self.directional_light.ambient_intensity + 0.1
-            self.directional_light = self.directional_light._replace(ambient_intensity=new)
-        self.camera.keyboard(code, x, y)
-
-
-    def mouse(self, x, y):
-        self.mouse_trap.mouse(x, y)
-
-    def createBuffers(self):
-        self.vao = glGenVertexArrays(1)
-        glBindVertexArray(self.vao)
-
-        positions = [
-                Vector3f(-1, -1, 0.5773),
-                Vector3f(0, -1, -1.15475),
-                Vector3f(1, -1, 0.5773),
-                Vector3f(0, 1, 0)]
-
-        indices = [0, 3, 1, 1, 3, 2, 2, 3, 0, 0, 1, 2]
-
-        normals = calc_normals(positions, chunk(indices, 3))
-
-        uvs = [(0.0, 0.0),
-               (0.5, 0.0),
-               (1.0, 0.0),
-               (0.5, 1.0)]
-
-        vertices = [Vertex(position, uv, normal)
-                    for (position, uv, normal) in zip(positions, uvs, normals)]
-
-        self.vbo = glGenBuffers(1)
-        glBindBuffer(GL_ARRAY_BUFFER, self.vbo)
-        glBufferData(GL_ARRAY_BUFFER, verticies_to_ctype(vertices),
-                     GL_STATIC_DRAW)
-
-        indices = (c_int * 16)(*indices)
-        self.ibo = glGenBuffers(1)
-        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, self.ibo)
-        glBufferData(GL_ELEMENT_ARRAY_BUFFER, indices, GL_STATIC_DRAW)
+    def update(self, dt):
+        pass
 
 
 class Input:
@@ -563,13 +447,26 @@ class Input:
         self.mouse_pos = None
         self.dmouse = (0.0, 0.0)
         self.dscroll = 0.0
+        self.keys_pressed = set()
+        self.keys_released = set()
+        self.keys_down = set()
+
 
     def is_key_down(self, key):
-        return glfw.get_key(self.window, key) == glfw.PRESS
+        return key in self.keys_down
+
+    def key_pressed(self, key):
+        return key in self.keys_pressed
+
+    def key_released(self, key):
+        return key in self.keys_released
 
     def update_end(self):
         self.dmouse = (0.0, 0.0)
         self.dscroll = 0.0
+
+        self.keys_pressed.clear()
+        self.keys_released.clear()
 
     def mouse_callback(self, window, xpos, ypos):
         old_mouse_pos = self.mouse_pos
@@ -580,6 +477,14 @@ class Input:
 
     def scroll_callback(self, window, xoffset, yoffset):
         self.dscroll = yoffset
+
+    def key_callback(self, window, key, scancode, action, mode):
+        if action == glfw.PRESS and key not in self.keys_down:
+            self.keys_pressed.add(key)
+            self.keys_down.add(key)
+        if action == glfw.RELEASE and key in self.keys_down:
+            self.keys_released.add(key)
+            self.keys_down.remove(key)
 
 
 class ShaderProgram:
@@ -635,17 +540,26 @@ def glfw_init():
     glfw.window_hint(glfw.CONTEXT_VERSION_MAJOR, 3)
     glfw.window_hint(glfw.CONTEXT_VERSION_MINOR, 3)
     glfw.window_hint(glfw.OPENGL_PROFILE, glfw.OPENGL_CORE_PROFILE)
+    glfw.window_hint(glfw.RESIZABLE, GL_FALSE)
 
 
 def glfw_create_window():
-    window = glfw.create_window(800, 600, "LearnOpenGL", None, None)
+    window = glfw.create_window(SCREEN_WIDTH, SCREEN_HEIGHT, "LearnOpenGL", None, None)
     glfw.make_context_current(window)
-    glfw.set_input_mode(window, glfw.CURSOR, glfw.CURSOR_DISABLED);  
-    glViewport(0, 0, 800, 600)
     return window
 
 
+def set_gl_options():
+    glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
+    glEnable(GL_CULL_FACE)
+    glEnable(GL_BLEND)
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
+
+
 def framebuffer_size_callback(window, width, height):
+    global SCREEN_WIDTH, SCREEN_HEIGHT
+    SCREEN_WIDTH = width
+    SCREEN_HEIGHT = height
     glViewport(0, 0, width, height)
 
 
@@ -860,112 +774,53 @@ def gen_cube_buffer():
 
     return vao
 
+
 INPUT = None
+
 
 def main():
     glfw_init()
 
     window = glfw_create_window()
+    set_gl_options()
     print("GL version: %s" % glGetString(GL_VERSION))
-
-    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
 
     # A bit hacky?
     global INPUT
     INPUT = Input(window)
+
+    glfw.set_framebuffer_size_callback(window, framebuffer_size_callback)
     glfw.set_cursor_pos_callback(window, INPUT.mouse_callback)
     glfw.set_scroll_callback(window, INPUT.scroll_callback)
+    glfw.set_key_callback(window, INPUT.key_callback)
 
-    glEnable(GL_DEPTH_TEST)
-
-    camera = Camera(Vector3f(0, 0, -3), Vector3f(0, 0, 1))
-
-    cube_vao = gen_cube_buffer()
-    lamp_vao = gen_cube_buffer()
-
-    cubes = [
-        Vector3f( 0.0,  0.0,  0.0),
-        Vector3f( 2.0,  5.0, 15.0),
-        Vector3f(-1.5, -2.2, 2.5),
-        Vector3f(-3.8, -2.0, 12.3),
-        Vector3f( 2.4, -0.4, 3.5),
-        Vector3f(-1.7,  3.0, 7.5),
-        Vector3f( 1.3, -2.0, 2.5),
-        Vector3f( 1.5,  2.0, 2.5),
-        Vector3f( 1.5,  0.2, 1.5),
-        Vector3f(-1.3,  1.0, 1.5)
-    ]
-
-    basic_shader = ShaderProgram('shader.vs', 'shader.fs')
-    basic_shader.use()
-    basic_shader.set("material.diffuse", 0)
-    basic_shader.set("material.specular", 1)
-    basic_shader.set("material.shininess", 32.0)
-
-    basic_shader.set('light.ambient', Vector3f(0.2, 0.2, 0.2))
-    basic_shader.set('light.diffuse', Vector3f(0.5, 0.5, 0.5))
-    basic_shader.set('light.specular', Vector3f(1.0, 1.0, 1.0))
-    basic_shader.set('light.constant', 1.0)
-    basic_shader.set('light.linear', 0.09)
-    basic_shader.set('light.quadratic', 0.032)
-
-    texture = Texture('container2.png')
-    specular_texture = Texture('container2_specular.png')
-
+    game_manager = GameManager()
     fps = FPSCounter()
 
     last_time = time.time()
     fov = 45.0
     while not glfw.window_should_close(window):
         fps.frame()
+
         now = time.time()
         dt = now - last_time
         last_time = now
         t = now
 
+        glfw.poll_events()
+
+        game_manager.update(dt)
+
         glClearColor(0.0, 0.0, 0.0, 1.0)
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
-
-        width, height = glfw.get_framebuffer_size(window)
-        camera.update(dt)
-        fov += INPUT.dscroll
-        fov = min(max(fov, 1.0), 90.0)
-        view = camera.to_camera_transform_matrix()
-        projection = to_perspective_projection_matrix(PerspectiveProjection(fov, width, height, 0.1, 100))
-
-        color = Vector3f(sin(t*2), sin(t*0.7), sin(t*1.3))
-
-        basic_shader.use()
-        basic_shader.set('view', view)
-        basic_shader.set('projection', projection)
-        basic_shader.set('viewPos', camera.pos)
-        basic_shader.set('light.position', camera.pos)
-        basic_shader.set('light.direction', camera.get_target_vector())
-        basic_shader.set('light.cutOff', cos(radians(12.5)))
-        basic_shader.set('light.outerCutOff', cos(radians(17.5)))
-
-        texture.bind(GL_TEXTURE0)
-        specular_texture.bind(GL_TEXTURE1)
-        glBindVertexArray(cube_vao)
-
-        for i, cube in enumerate(cubes):
-            angle = 20 * i
-            cube_model_matrix = to_translation_matrix(cube)
-            cube_model_matrix *= to_rotation_matrix(Vector3f(1.0, 0.3, -0.5) * angle)
-            basic_shader.set('model', cube_model_matrix)
-
-            glDrawArrays(GL_TRIANGLES, 0, 36)
-    
-        glBindVertexArray(0)
+        game_manager.render()
 
         glfw.swap_buffers(window)
-
-        INPUT.update_end()
-        glfw.poll_events()
 
         if INPUT.is_key_down(glfw.KEY_Q):
             glfw.set_window_should_close(window, True)
 
+        INPUT.update_end()
 
 
     glfw.terminate();
