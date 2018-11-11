@@ -13,11 +13,30 @@ from PIL import Image
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
 
+def make_struct(name, fields):
+
+    class Struct:
+        __slots__ = list(fields.keys())
+
+        def __init__(self, **kwargs):
+            extra_fields = kwargs.keys() - fields.keys()
+            assert len(extra_fields) == 0, "Passed fields not in %s - %s" % (name, ', '.join(extra_fields))
+
+            for key, value in ChainMap(kwargs, fields).items():
+                setattr(self, key, value)
+
+        def __repr__(self):
+            fields = ', '.join(f'{key}={getattr(self, fields)}' for field in fields)
+            return "{name} {{{fields}}}" 
+
+    return Struct
+                
+
 PerspectiveProjection = namedtuple('PerspectiveProjection',
                                    ['fov', 'width', 'height', 'z_near', 'z_far'])
 
-Vertex = namedtuple('Vertex', ['position', 'uv', 'normal'])
 
+Vertex = namedtuple('Vertex', ['position', 'uv', 'normal'])
 
 def chunk(iterable, chunk_size):
     chunk = []
@@ -214,11 +233,21 @@ class Matrix4f:
         self.values[index*4:index*4+4] = value
 
     def __mul__(self, other):
-        result = Matrix4f()
-        for i in range(4):
-            for j in range(4):
-                result.values[4*i+j] = sum(self.values[4 * i + k] * other.values[4 * k + j] for k in range(4))
-        return result
+        if isinstance(other, Matrix4f):
+            result = Matrix4f()
+            for i in range(4):
+                for j in range(4):
+                    result.values[4*i+j] = sum(self.values[4 * i + k] * other.values[4 * k + j] for k in range(4))
+            return result
+        if isinstance(other, Vector4f):
+            values = [0.0] * 4
+            for i in range(4):
+                values[i] = (self.values[4 * i + 0] * other.x +
+                             self.values[4 * i + 1] * other.y +
+                             self.values[4 * i + 2] * other.z +
+                             self.values[4 * i + 3] * other.w)
+            return Vector4f(*values)
+        return NotImplemented
 
     def __repr__(self):
         return "[%3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f]" % tuple(self.values)
@@ -226,10 +255,53 @@ class Matrix4f:
     def ctypes(self):
         return (c_float * 16)(*self.values)
 
+
 Matrix4f.IDENTITY = Matrix4f([1, 0, 0, 0,
                               0, 1, 0, 0,
                               0, 0, 1, 0,
                               0, 0, 0, 1])
+
+
+class Vector2f:
+
+    def __init__(self, x=0.0, y=0.0):
+        self.x = float(x)
+        self.y = float(y)
+
+    def normalize(self):
+        length = self.length()
+        self.x /= length
+        self.y /= length
+
+    def length(self):
+        return sqrt(self.x * self.x + self.y * self.y)
+
+    def copy(self):
+        return Vector2f(self.x, self.y)
+
+    def __add__(self, other):
+        if isinstance(other, Vector2f):
+            return Vector2f(self.x+other.x, self.y+other.y)
+        return NotImplemented
+
+    def __sub__(self, other):
+        if isinstance(other, Vector2f):
+            return Vector2f(self.x-other.x, self.y-other.y)
+        return NotImplemented
+
+    def __mul__(self, other):
+        if isinstance(other, (float, int)):
+            return Vector2f(other * self.x, other * self.y)
+        return NotImplemented
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __repr__(self):
+        return f"Vector2f(x={self.x:2.2f}, y={self.y:2.2f})"
+
+    def ctypes(self):
+        return (c_float*2)(self.x, self.y)
 
 
 class Vector3f:
@@ -280,6 +352,52 @@ class Vector3f:
 
     def ctypes(self):
         return (c_float*3)(self.x, self.y, self.z)
+
+
+class Vector4f:
+
+    def __init__(self, x=0.0, y=0.0, z=0.0, w=0.0):
+        self.x = float(x)
+        self.y = float(y)
+        self.z = float(z)
+        self.w = float(w)
+
+    def normalize(self):
+        length = self.length()
+        self.x /= length
+        self.y /= length
+        self.z /= length
+        self.w /= length
+
+    def length(self):
+        return sqrt(self.x * self.x + self.y * self.y + self.z * self.z + self.w * self.w)
+
+    def copy(self):
+        return Vector4f(self.x, self.y, self.z, self.w)
+
+    def __add__(self, other):
+        if isinstance(other, Vector4f):
+            return Vector4f(self.x+other.x, self.y+other.y, self.z+other.z, self.w+other.w)
+        return NotImplemented
+
+    def __sub__(self, other):
+        if isinstance(other, Vector4f):
+            return Vector4f(self.x-other.x, self.y-other.y, self.z-other.z, self.w-other.w)
+        return NotImplemented
+
+    def __mul__(self, other):
+        if isinstance(other, (float, int)):
+            return Vector4f(other * self.x, other * self.y, other * self.z, other * self.w)
+        return NotImplemented
+
+    def __rmul__(self, other):
+        return self.__mul__(other)
+
+    def __repr__(self):
+        return f"Vector4f(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f}, w={self.w:2.2f})"
+
+    def ctypes(self):
+        return (c_float*4)(self.x, self.y, self.z, self.w)
 
 
 Vector3f.UP = Vector3f(0.0, 1.0, 0.0)
@@ -357,6 +475,26 @@ def to_perspective_projection_matrix(projection):
     return m
 
 
+def to_orthographic_projection(width, height):
+    near = -1.0
+    far = 1.0
+    l = 0.0
+    r = float(width)
+    t = 0.0
+    b = float(height)
+
+    m = Matrix4f()
+    m[0][0] = 2.0 / (r - l)
+    m[1][1] = 2.0 / (t - b)
+    m[2][2] = -2 / (far - near)
+
+    m[0][3] = - (r + l) / (r - l)
+    m[1][3] = - (t + b) / (t - b)
+    m[2][3] = - (far + near) / (far - near)
+    m[3][3] = 1
+    return m
+
+
 class Pipeline:
 
     def __init__(self, camera):
@@ -428,13 +566,54 @@ class FPSCounter:
         return self.last_reading
 
 
+Sprite = make_struct('Sprite', 
+                     {'texture': None,
+                      'position': Vector2f(0, 0),
+                      'size': Vector2f(32, 32),
+                      'rotation': 0.0,
+                      'color': Vector3f(1.0, 1.0, 1.0)})
+
+
 class GameManager:
 
     def __init__(self):
-        pass
+        self._sprite_vao = gen_sprite_buffer()
+
+        self._shader = ShaderProgram('shader.vs', 'shader.fs')
+        self._shader.use()
+        self._shader.set("projection", to_orthographic_projection(SCREEN_WIDTH, SCREEN_HEIGHT))
+        print(to_orthographic_projection(SCREEN_WIDTH, SCREEN_HEIGHT) * Vector4f(0, 300, 0, 1))
+        self._shader.set("image", 0)
+
+        self.textures = {
+                'AWESOMEFACE': Texture('awesomeface.png', True, flip=False)
+                        }
 
     def render(self):
-        pass
+        self._shader.use()
+
+        glBindVertexArray(self._sprite_vao)
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+        sprites = [Sprite(texture="AWESOMEFACE", position=Vector2f(200, 200), size=Vector2f(300, 400), rotation=45.0,
+                          color=Vector3f(0.0, 1.0, 0.0))]
+        glBindVertexArray(self._sprite_vao)
+        glActiveTexture(GL_TEXTURE0)
+        for sprite in sprites:
+            model = to_translation_matrix(Vector3f(sprite.position.x, sprite.position.y, 0))
+            centre_point_translation = Vector3f(sprite.size.x * 0.5, sprite.size.y * 0.5, 0.0) 
+            model *= to_translation_matrix(centre_point_translation)
+            model *= to_rotation_matrix(Vector3f(0.0, 0.0, sprite.rotation))
+            model *= to_translation_matrix(-1 * centre_point_translation)
+
+            model *= to_scale_matrix(Vector3f(sprite.size.x, sprite.size.y))
+
+            self._shader.set("model", model)
+            self._shader.set("spriteColor", sprite.color)
+
+            self.textures[sprite.texture].bind(GL_TEXTURE0)
+
+            glDrawArrays(GL_TRIANGLES, 0, 6)
 
     def update(self, dt):
         pass
@@ -551,7 +730,7 @@ def glfw_create_window():
 
 def set_gl_options():
     glViewport(0, 0, SCREEN_WIDTH, SCREEN_HEIGHT)
-    glEnable(GL_CULL_FACE)
+    #glEnable(GL_CULL_FACE)
     glEnable(GL_BLEND)
     glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA)
 
@@ -561,6 +740,29 @@ def framebuffer_size_callback(window, width, height):
     SCREEN_WIDTH = width
     SCREEN_HEIGHT = height
     glViewport(0, 0, width, height)
+
+
+def gen_sprite_buffer():
+    vertices = [
+            0.0, 1.0, 0.0, 1.0,
+            1.0, 0.0, 1.0, 0.0,
+            0.0, 0.0, 0.0, 0.0,
+            0.0, 1.0, 0.0, 1.0,
+            1.0, 1.0, 1.0, 1.0,
+            1.0, 0.0, 1.0, 0.0 ]
+
+    vao = glGenVertexArrays(1)
+    vbo = glGenBuffers(1)
+
+    glBindVertexArray(vao)
+
+    glBindBuffer(GL_ARRAY_BUFFER, vbo)
+    glBufferData(GL_ARRAY_BUFFER, (c_float * len(vertices))(*vertices), GL_STATIC_DRAW)
+
+    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(c_float), c_void_p(0))
+    glEnableVertexAttribArray(0)
+
+    return vao
 
 
 def gen_triangle_buffer():
@@ -812,7 +1014,7 @@ def main():
         game_manager.update(dt)
 
         glClearColor(0.0, 0.0, 0.0, 1.0)
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
+        glClear(GL_COLOR_BUFFER_BIT)
         game_manager.render()
 
         glfw.swap_buffers(window)
