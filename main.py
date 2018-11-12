@@ -1,8 +1,14 @@
-from collections import *
-import sys, time
-from math import *
-from ctypes import *
+import glob
+import sys
+import time
 
+from collections import *
+from ctypes import *
+from enum import Enum
+from math import *
+
+import OpenGL
+#OpenGL.ERROR_CHECKING = False
 from OpenGL.GL import *
 from OpenGL.GL import shaders as ogl_shaders
 
@@ -26,8 +32,8 @@ def make_struct(name, fields):
                 setattr(self, key, value)
 
         def __repr__(self):
-            fields = ', '.join(f'{key}={getattr(self, fields)}' for field in fields)
-            return "{name} {{{fields}}}" 
+            field_str = ', '.join(f'{field}={getattr(self, field)}' for field in fields)
+            return f"{name} {{{field_str}}}" 
 
     return Struct
                 
@@ -85,7 +91,7 @@ def get_window_height():
 
 class Texture:
 
-    def __init__(self, filename, has_alpha=True, flip=True):
+    def __init__(self, filename, has_alpha=True, flip=False):
         components = 4 if has_alpha else 3
         mode = GL_RGBA if has_alpha else GL_RGB
 
@@ -573,47 +579,120 @@ Sprite = make_struct('Sprite',
                       'rotation': 0.0,
                       'color': Vector3f(1.0, 1.0, 1.0)})
 
+Brick = make_struct('Brick',
+                    {'solid': False,
+                     'brick_id': 0,
+                     'destroyed': False,
+                     'pos': Vector2f(0, 0)})
+
+Level = make_struct('Level',
+                    {'bricks': [],
+                     'width': 0,
+                     'height': 0})
+
+
+def draw_sprites(sprites, sprite_vao, shader, textures):
+    shader.use()
+    glBindVertexArray(sprite_vao)
+    glActiveTexture(GL_TEXTURE0)
+    
+    for sprite in sprites:
+        model = to_translation_matrix(Vector3f(sprite.position.x, sprite.position.y, 0))
+        centre_point_translation = Vector3f(sprite.size.x * 0.5, sprite.size.y * 0.5, 0.0) 
+        model *= to_translation_matrix(centre_point_translation)
+        model *= to_rotation_matrix(Vector3f(0.0, 0.0, sprite.rotation))
+        model *= to_translation_matrix(-1 * centre_point_translation)
+        model *= to_scale_matrix(Vector3f(sprite.size.x, sprite.size.y))
+
+        shader.set("model", model)
+        shader.set("spriteColor", sprite.color)
+        textures[sprite.texture].bind(GL_TEXTURE0)
+
+        glDrawArrays(GL_TRIANGLES, 0, 6)
+
+
+class GameState(Enum):
+    GAME_ACTIVE = 0
+    GAME_MENU = 1
+    GAME_WIN = 2
+
+
+def load_level(path):
+    level_data = open(path).read()
+    level = [[int(brick_id) for brick_id in line.split()] for line in level_data.split('\n')]
+
+    bricks = []
+    for y, row in enumerate(level):
+        for x, brick_id in enumerate(row):
+            if brick_id == 0:
+                continue
+            solid = (brick_id == 1)
+            bricks.append(Brick(solid=solid, brick_id=brick_id, pos=Vector2f(x, y)))
+
+    height = len(level)
+    width = len(level[0])
+    return Level(bricks=bricks, width=width, height=height)
+
+
+BRICK_ID_TO_COLOR = {
+        1: Vector3f(0.8, 0.8, 0.7),
+        2: Vector3f(0.2, 0.6, 1.0),
+        3: Vector3f(0.0, 0.7, 0.0),
+        4: Vector3f(0.8, 0.8, 0.4),
+        5: Vector3f(1.0, 0.5, 0.0) }
+
+
+def render_level(level, width, height):
+    unit_width = width / level.width
+    unit_height = height / level.height
+    sprites = []
+    for brick in level.bricks:
+        if brick.destroyed:
+            continue
+        sprites.append(Sprite(texture="solid" if brick.solid else "block",
+                              position=Vector2f(brick.pos.x * unit_width, brick.pos.y * unit_height),
+                              size=Vector2f(unit_width, unit_height),
+                              color=BRICK_ID_TO_COLOR[brick.brick_id]))
+    return sprites
+
 
 class GameManager:
 
     def __init__(self):
+        now = time.time()
         self._sprite_vao = gen_sprite_buffer()
 
         self._shader = ShaderProgram('shader.vs', 'shader.fs')
         self._shader.use()
         self._shader.set("projection", to_orthographic_projection(SCREEN_WIDTH, SCREEN_HEIGHT))
-        print(to_orthographic_projection(SCREEN_WIDTH, SCREEN_HEIGHT) * Vector4f(0, 300, 0, 1))
         self._shader.set("image", 0)
 
         self.textures = {
-                'AWESOMEFACE': Texture('awesomeface.png', True, flip=False)
+                'AWESOMEFACE': Texture('awesomeface.png', True, flip=False),
+                'block': Texture('block.png', False),
+                'solid': Texture('block_solid.png', False),
+                'background': Texture('background.jpg', False)
                         }
 
+        self.levels = list(map(load_level, sorted(glob.glob('levels/*.lvl'))))
+        self.level = 0
+
+        self.state = GameState.GAME_ACTIVE
+
+
     def render(self):
-        self._shader.use()
+        sprites = []
 
-        glBindVertexArray(self._sprite_vao)
-        glDrawArrays(GL_TRIANGLES, 0, 6)
+        start = time.time()
+        if self.state == GameState.GAME_ACTIVE:
+            sprites.append(Sprite(texture='background',
+                                  size=Vector2f(SCREEN_WIDTH,SCREEN_HEIGHT)))
+            sprites.extend(render_level(self.levels[self.level], SCREEN_WIDTH, SCREEN_HEIGHT/2))
+        #print("GEN", time.time() - start)
 
-        sprites = [Sprite(texture="AWESOMEFACE", position=Vector2f(200, 200), size=Vector2f(300, 400), rotation=45.0,
-                          color=Vector3f(0.0, 1.0, 0.0))]
-        glBindVertexArray(self._sprite_vao)
-        glActiveTexture(GL_TEXTURE0)
-        for sprite in sprites:
-            model = to_translation_matrix(Vector3f(sprite.position.x, sprite.position.y, 0))
-            centre_point_translation = Vector3f(sprite.size.x * 0.5, sprite.size.y * 0.5, 0.0) 
-            model *= to_translation_matrix(centre_point_translation)
-            model *= to_rotation_matrix(Vector3f(0.0, 0.0, sprite.rotation))
-            model *= to_translation_matrix(-1 * centre_point_translation)
-
-            model *= to_scale_matrix(Vector3f(sprite.size.x, sprite.size.y))
-
-            self._shader.set("model", model)
-            self._shader.set("spriteColor", sprite.color)
-
-            self.textures[sprite.texture].bind(GL_TEXTURE0)
-
-            glDrawArrays(GL_TRIANGLES, 0, 6)
+        start = time.time()
+        draw_sprites(sprites, self._sprite_vao, self._shader, self.textures)
+        #print(time.time() - start)
 
     def update(self, dt):
         pass
