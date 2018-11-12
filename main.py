@@ -7,6 +7,9 @@ from ctypes import *
 from enum import Enum
 from math import *
 
+import numpy as np
+import quaternion
+
 import OpenGL
 #OpenGL.ERROR_CHECKING = False
 from OpenGL.GL import *
@@ -18,6 +21,11 @@ from PIL import Image
 
 SCREEN_WIDTH = 800
 SCREEN_HEIGHT = 600
+
+
+def clamp(a, b, c):
+    return max(a, min(b, c))
+
 
 def make_struct(name, fields):
 
@@ -53,27 +61,6 @@ def chunk(iterable, chunk_size):
             chunk = []
     if chunk:
         yield chunk
-
-
-def calc_normals(positions, triangle_indices):
-    normals = [Vector3f() for _ in range(len(positions))]
-    for triangle in triangle_indices:
-        v1 = positions[triangle[1]] - positions[triangle[0]]
-        v2 = positions[triangle[2]] - positions[triangle[0]]
-
-        normal = v1.cross(v2)
-        normal.normalize()
-
-        normals[triangle[0]] += normal
-        normals[triangle[1]] += normal
-        normals[triangle[2]] += normal
-
-    for normal in normals:
-        normal.normalize()
-
-    print(positions)
-    print(normals)
-    return normals
 
 
 def verticies_to_ctype(vertices):
@@ -134,15 +121,15 @@ class Camera:
     def update(self, dt):
         target = self.get_target_vector()
         speed = 6
-        if INPUT.is_key_down(glfw.KEY_W):
+        if INPUT.key_down(glfw.KEY_W):
             self.pos += target * speed * dt
-        if INPUT.is_key_down(glfw.KEY_S):
+        if INPUT.key_down(glfw.KEY_S):
             self.pos += target * -speed * dt
-        if INPUT.is_key_down(glfw.KEY_A):
+        if INPUT.key_down(glfw.KEY_A):
             left = target.cross(Vector3f.UP)
             left.normalize()
             self.pos += left * speed * dt
-        if INPUT.is_key_down(glfw.KEY_D):
+        if INPUT.key_down(glfw.KEY_D):
             right = Vector3f.UP.cross(target)
             right.normalize()
             self.pos += right * speed * dt
@@ -158,17 +145,17 @@ class Camera:
         u.normalize()
         v = n.cross(u)
         
-        m = Matrix4f()
-        m[0] = [u.x, u.y, u.z, 0]
-        m[1] = [v.x, v.y, v.z, 0]
-        m[2] = [n.x, n.y, n.z, 0]
-        m[3][3] = 1.0
+        m = np.array([ [u.x, u.y, u.z, 0.0],
+                       [v.x, v.y, v.z, 0.0],
+                       [n.x, n.y, n.z, 0.0],
+                       [0.0, 0.0, 0.0, 1.0]])
 
         return m * to_translation_matrix(-1.0 * self.pos)
 
     def get_target_vector(self):
         target = Vector3f(1.0, 0.0, 0.0)
 
+        assert False, "quaternions still need fixing!"
         h_rot = Quaternion.from_vector_and_angle(Vector3f.UP, self.yaw)
         target = h_rot.rotate(target)
 
@@ -178,94 +165,13 @@ class Camera:
         return target
 
 
-
-class Quaternion:
-
-    def __init__(self, x, y, z, w):
-        self.x = x
-        self.y = y
-        self.z = z
-        self.w = w
-
-    def conj(self):
-        return Quaternion(-self.x, -self.y, -self.z, self.w)
-
-    def rotate(self, v):
-        return ((self * v) * self.conj())._to_vec()
-
-    @classmethod
-    def from_vector_and_angle(cls, v, theta_deg):
-        theta = radians(theta_deg)
-        q = Quaternion(v.x * sin(theta/2),
-                       v.y * sin(theta/2),
-                       v.z * sin(theta/2),
-                       cos(theta/2))
-        return q
-
-    def _to_vec(self):
-        return Vector3f(self.x, self.y, self.z)
-
-    def __mul__(self, other):
-        if isinstance(other, Vector3f):
-            return self * Quaternion(other.x, other.y, other.z, 0)
-        if not isinstance(other, Quaternion):
-            return NotImplemented
-        q0, q1, q2, q3 = self.w, self.x, self.y, self.z
-        r0, r1, r2, r3 = other.w, other.x, other.y, other.z
-        return Quaternion(x=r0*q1 + r1*q0 - r2*q3 + r3*q2,
-                          y=r0*q2 + r1*q3 + r2*q0 - r3*q1,
-                          z=r0*q3 - r1*q2 + r2*q1 + r3*q0,
-                          w=r0*q0 - r1*q1 - r2*q2 - r3*q3)
-
-    def __repr__(self):
-        return f"Quaternion(x={self.x:2.2f}, y={self.y:2.2f}, z={self.z:2.2f}, w={self.w:2.2f})"
-
-
-class Matrix4f:
-
-    def __init__(self, values=None):
-        self.values = values if values else [0.0] * 16
-
-    def __getitem__(self, index):
-        class ListView:
-            def __setitem__(inner_self, inner_index, value):
-                self.values[index * 4 + inner_index] = value
-            def __getitem__(inner_self, inner_index):
-                return self.values[index * 4 + inner_index]
-        # Grim. Context dependant object creation.
-        return ListView()
-
-    def __setitem__(self, index, value):
-        self.values[index*4:index*4+4] = value
-
-    def __mul__(self, other):
-        if isinstance(other, Matrix4f):
-            result = Matrix4f()
-            for i in range(4):
-                for j in range(4):
-                    result.values[4*i+j] = sum(self.values[4 * i + k] * other.values[4 * k + j] for k in range(4))
-            return result
-        if isinstance(other, Vector4f):
-            values = [0.0] * 4
-            for i in range(4):
-                values[i] = (self.values[4 * i + 0] * other.x +
-                             self.values[4 * i + 1] * other.y +
-                             self.values[4 * i + 2] * other.z +
-                             self.values[4 * i + 3] * other.w)
-            return Vector4f(*values)
-        return NotImplemented
-
-    def __repr__(self):
-        return "[%3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f\n %3.2f %3.2f %3.2f %3.2f]" % tuple(self.values)
-
-    def ctypes(self):
-        return (c_float * 16)(*self.values)
-
-
-Matrix4f.IDENTITY = Matrix4f([1, 0, 0, 0,
-                              0, 1, 0, 0,
-                              0, 0, 1, 0,
-                              0, 0, 0, 1])
+def from_vector_and_angle(cls, v, theta_deg):
+    theta = radians(theta_deg)
+    q = quaternion(v.x * sin(theta/2),
+                   v.y * sin(theta/2),
+                   v.z * sin(theta/2),
+                   cos(theta/2))
+    return q
 
 
 class Vector2f:
@@ -412,11 +318,10 @@ Vector3f.ORIGIN = Vector3f(0.0, 0.0, 0.0)
 
 
 def to_scale_matrix(v):
-    m = Matrix4f()
-    m[0][0] = v.x
-    m[1][1] = v.y
-    m[2][2] = v.z
-    m[3][3] = 1.0
+    m = np.array([ [v.x, 0.0, 0.0, 0.0],
+                   [0.0, v.y, 0.0, 0.0],
+                   [0.0, 0.0, v.z, 0.0],
+                   [0.0, 0.0, 0.0, 1.0] ])
     return m
 
 
@@ -425,7 +330,7 @@ def to_rotation_matrix(v):
     y = radians(v.y)
     z = radians(v.z)
 
-    mx, my, mz = Matrix4f(), Matrix4f(), Matrix4f()
+    mx, my, mz = np.zeros( (4, 4) ), np.zeros( (4, 4) ), np.zeros( (4, 4) )
     
     mx[0][0] = 1.0
     mx[1][1] = cos(x)
@@ -452,16 +357,10 @@ def to_rotation_matrix(v):
 
 
 def to_translation_matrix(v):
-    m = Matrix4f()
-
-    m[0][0] = 1.0
-    m[1][1] = 1.0
-    m[2][2] = 1.0
-    m[0][3] = v.x
-    m[1][3] = v.y
-    m[2][3] = v.z
-    m[3][3] = 1.0
-
+    m = np.array([ [ 1.0, 0.0, 0.0, v.x],
+                   [ 0.0, 1.0, 0.0, v.y],
+                   [ 0.0, 0.0, 1.0, v.z],
+                   [ 0.0, 0.0, 0.0, 1.0] ])
     return m
 
 
@@ -472,7 +371,7 @@ def to_perspective_projection_matrix(projection):
     z_range = z_near - z_far
     tan_half_fov = tan(radians(fov / 2.0))
 
-    m = Matrix4f()
+    m = np.zeros( (3, 4) )
     m[0][0] = 1.0 / (tan_half_fov * ar)
     m[1][1] = 1.0 / tan_half_fov
     m[2][2] = (-z_near - z_far) / z_range
@@ -489,7 +388,7 @@ def to_orthographic_projection(width, height):
     t = 0.0
     b = float(height)
 
-    m = Matrix4f()
+    m = np.zeros( (4, 4) )
     m[0][0] = 2.0 / (r - l)
     m[1][1] = 2.0 / (t - b)
     m[2][2] = -2 / (far - near)
@@ -499,53 +398,6 @@ def to_orthographic_projection(width, height):
     m[2][3] = - (far + near) / (far - near)
     m[3][3] = 1
     return m
-
-
-class Pipeline:
-
-    def __init__(self, camera):
-        self.scale = Vector3f(1.0, 1.0, 1.0)
-        self.world_pos = Vector3f()
-        self.rotate = Vector3f()
-        self.projection = PerspectiveProjection(fov=30.0, width=1024, height=768, z_near=1.0, z_far=1000.0)
-        self.camera = camera
-
-    def set_scale(self, x, y, z):
-        self.scale.x = x
-        self.scale.y = y
-        self.scale.z = z
-
-    def set_pos(self, x, y, z):
-        self.world_pos.x = x
-        self.world_pos.y = y
-        self.world_pos.z = z
-
-    def set_rotation(self, x, y, z):
-        self.rotate.x = x
-        self.rotate.y = y
-        self.rotate.z = z
-
-    def set_perspective_projection(self, projection):
-        self.projection = projection
-
-    def set_camera(self, camera):
-        self.camera = camera
-
-    def bake(self):
-        camera_translation_matrix = to_translation_matrix(-1.0 * self.camera.pos)
-        camera_rotation_matrix = self.camera.to_camera_transform_matrix()
-
-        projection_matrix = to_perspective_projection_matrix(self.projection)
-        return (projection_matrix * 
-                camera_rotation_matrix * camera_translation_matrix * 
-                self.world_transformation())
-
-    def world_transformation(self):
-        scale_matrix = to_scale_matrix(self.scale)
-        rotation_matrix = to_rotation_matrix(self.rotate)
-        translation_matrix = to_translation_matrix(self.world_pos)
-
-        return translation_matrix * rotation_matrix * scale_matrix
 
 
 class FPSCounter:
@@ -572,6 +424,9 @@ class FPSCounter:
         return self.last_reading
 
 
+PLAYER_SIZE = Vector2f(100, 20)
+PLAYER_VELOCITY = 500
+
 Sprite = make_struct('Sprite', 
                      {'texture': None,
                       'position': Vector2f(0, 0),
@@ -590,6 +445,10 @@ Level = make_struct('Level',
                      'width': 0,
                      'height': 0})
 
+BreakoutState = make_struct('GameData',
+                            {'player_pos': Vector2f(0, 0),
+                             'level': None})
+
 
 def draw_sprites(sprites, sprite_vao, shader, textures):
     shader.use()
@@ -597,12 +456,13 @@ def draw_sprites(sprites, sprite_vao, shader, textures):
     glActiveTexture(GL_TEXTURE0)
     
     for sprite in sprites:
-        model = to_translation_matrix(Vector3f(sprite.position.x, sprite.position.y, 0))
         centre_point_translation = Vector3f(sprite.size.x * 0.5, sprite.size.y * 0.5, 0.0) 
-        model *= to_translation_matrix(centre_point_translation)
-        model *= to_rotation_matrix(Vector3f(0.0, 0.0, sprite.rotation))
-        model *= to_translation_matrix(-1 * centre_point_translation)
-        model *= to_scale_matrix(Vector3f(sprite.size.x, sprite.size.y))
+
+        model = to_translation_matrix(Vector3f(sprite.position.x, sprite.position.y, 0))
+        model = model @ to_translation_matrix(centre_point_translation)
+        model = model @ to_rotation_matrix(Vector3f(0.0, 0.0, sprite.rotation))
+        model = model @ to_translation_matrix(-1 * centre_point_translation)
+        model = model @ to_scale_matrix(Vector3f(sprite.size.x, sprite.size.y))
 
         shader.set("model", model)
         shader.set("spriteColor", sprite.color)
@@ -642,10 +502,14 @@ BRICK_ID_TO_COLOR = {
         5: Vector3f(1.0, 0.5, 0.0) }
 
 
-def render_level(level, width, height):
+def render_breakout(breakout_state, width, height):
+    sprites = []
+
+    sprites.append(Sprite(texture="paddle", position=breakout_state.player_pos, size=PLAYER_SIZE))
+
+    level = breakout_state.level
     unit_width = width / level.width
     unit_height = height / level.height
-    sprites = []
     for brick in level.bricks:
         if brick.destroyed:
             continue
@@ -671,14 +535,26 @@ class GameManager:
                 'AWESOMEFACE': Texture('awesomeface.png', True, flip=False),
                 'block': Texture('block.png', False),
                 'solid': Texture('block_solid.png', False),
-                'background': Texture('background.jpg', False)
+                'background': Texture('background.jpg', False),
+                'paddle': Texture('paddle.png', True)
                         }
 
-        self.levels = list(map(load_level, sorted(glob.glob('levels/*.lvl'))))
-        self.level = 0
+        self.levels = sorted(glob.glob('levels/*.lvl'))
 
+        self.breakout_state = BreakoutState(level=load_level(self.levels[0]),
+                                            player_pos=Vector2f((SCREEN_WIDTH - PLAYER_SIZE.x)/2,
+                                                                SCREEN_HEIGHT - PLAYER_SIZE.y))
         self.state = GameState.GAME_ACTIVE
 
+    def update(self, dt):
+        if self.state == GameState.GAME_ACTIVE:
+            player_pos = self.breakout_state.player_pos
+            velocity = PLAYER_VELOCITY * dt
+            if INPUT.key_down(glfw.KEY_A):
+                player_pos.x -= velocity
+            if INPUT.key_down(glfw.KEY_D):
+                player_pos.x += velocity
+            player_pos.x = clamp(0, player_pos.x, SCREEN_WIDTH - PLAYER_SIZE.x)
 
     def render(self):
         sprites = []
@@ -687,15 +563,10 @@ class GameManager:
         if self.state == GameState.GAME_ACTIVE:
             sprites.append(Sprite(texture='background',
                                   size=Vector2f(SCREEN_WIDTH,SCREEN_HEIGHT)))
-            sprites.extend(render_level(self.levels[self.level], SCREEN_WIDTH, SCREEN_HEIGHT/2))
-        #print("GEN", time.time() - start)
+            sprites.extend(render_breakout(self.breakout_state, SCREEN_WIDTH, SCREEN_HEIGHT/2))
 
         start = time.time()
         draw_sprites(sprites, self._sprite_vao, self._shader, self.textures)
-        #print(time.time() - start)
-
-    def update(self, dt):
-        pass
 
 
 class Input:
@@ -710,7 +581,7 @@ class Input:
         self.keys_down = set()
 
 
-    def is_key_down(self, key):
+    def key_down(self, key):
         return key in self.keys_down
 
     def key_pressed(self, key):
@@ -775,8 +646,13 @@ class ShaderProgram:
         if isinstance(value, float):
             glUniform1f(location, value)
             return
-        if isinstance(value, Matrix4f):
-            glUniformMatrix4fv(location, 1, GL_TRUE, value.ctypes())
+        if isinstance(value, np.ndarray):
+            if value.shape == (4, 4):
+                glUniformMatrix4fv(location, 1, GL_TRUE, value)
+            elif value.shape == (3,):
+                glUniform3fv(location, 1, value)
+            else:
+                raise ValueError("don't know how to pass a np array of size %s", str(value.shape))
             return
         if isinstance(value, Vector3f):
             glUniform3fv(location, 1, value.ctypes())
@@ -1098,7 +974,7 @@ def main():
 
         glfw.swap_buffers(window)
 
-        if INPUT.is_key_down(glfw.KEY_Q):
+        if INPUT.key_down(glfw.KEY_Q):
             glfw.set_window_should_close(window, True)
 
         INPUT.update_end()
