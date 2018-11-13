@@ -424,7 +424,6 @@ class FPSCounter:
         return self.last_reading
 
 
-PLAYER_SIZE = Vector2f(100, 20)
 PLAYER_VELOCITY = 500
 
 Sprite = make_struct('Sprite', 
@@ -445,10 +444,23 @@ Level = make_struct('Level',
                      'width': 0,
                      'height': 0})
 
-BreakoutState = make_struct('GameData',
-                            {'player_pos': Vector2f(0, 0),
-                             'level': None})
 
+Player = make_struct('Player',
+                     {'size': Vector2f(100, 20),
+                      'pos': Vector2f()})
+
+
+Ball = make_struct('Ball',
+                   {'radius': 12.5,
+                    'pos': Vector2f(),
+                    'velocity': Vector2f(),
+                    'stuck': True})
+
+
+BreakoutState = make_struct('GameData',
+                            {'player': None,
+                             'level': None,
+                             'ball': None})
 
 def draw_sprites(sprites, sprite_vao, shader, textures):
     shader.use()
@@ -505,7 +517,7 @@ BRICK_ID_TO_COLOR = {
 def render_breakout(breakout_state, width, height):
     sprites = []
 
-    sprites.append(Sprite(texture="paddle", position=breakout_state.player_pos, size=PLAYER_SIZE))
+    sprites.append(Sprite(texture="paddle", position=breakout_state.player.pos, size=breakout_state.player.size))
 
     level = breakout_state.level
     unit_width = width / level.width
@@ -517,6 +529,11 @@ def render_breakout(breakout_state, width, height):
                               position=Vector2f(brick.pos.x * unit_width, brick.pos.y * unit_height),
                               size=Vector2f(unit_width, unit_height),
                               color=BRICK_ID_TO_COLOR[brick.brick_id]))
+
+    sprites.append(Sprite(texture='ball',
+                          position=breakout_state.ball.pos,
+                          size=Vector2f(breakout_state.ball.radius*2, breakout_state.ball.radius*2)))
+
     return sprites
 
 
@@ -532,29 +549,55 @@ class GameManager:
         self._shader.set("image", 0)
 
         self.textures = {
-                'AWESOMEFACE': Texture('awesomeface.png', True, flip=False),
+                'ball': Texture('awesomeface.png', True, flip=False),
                 'block': Texture('block.png', False),
                 'solid': Texture('block_solid.png', False),
                 'background': Texture('background.jpg', False),
-                'paddle': Texture('paddle.png', True)
+                'paddle': Texture('paddle.png', True),
                         }
 
+        self.state = GameState.GAME_ACTIVE
         self.levels = sorted(glob.glob('levels/*.lvl'))
 
+        player_size = Vector2f(100, 20)
+        player = Player(pos=Vector2f((SCREEN_WIDTH - player_size.x)/2, SCREEN_HEIGHT - player_size.y),
+                        size=player_size)
+        ball = Ball()
         self.breakout_state = BreakoutState(level=load_level(self.levels[0]),
-                                            player_pos=Vector2f((SCREEN_WIDTH - PLAYER_SIZE.x)/2,
-                                                                SCREEN_HEIGHT - PLAYER_SIZE.y))
-        self.state = GameState.GAME_ACTIVE
+                                            player=player,
+                                            ball=ball)
 
     def update(self, dt):
         if self.state == GameState.GAME_ACTIVE:
-            player_pos = self.breakout_state.player_pos
+            player = self.breakout_state.player
             velocity = PLAYER_VELOCITY * dt
             if INPUT.key_down(glfw.KEY_A):
-                player_pos.x -= velocity
+                player.pos.x -= velocity
             if INPUT.key_down(glfw.KEY_D):
-                player_pos.x += velocity
-            player_pos.x = clamp(0, player_pos.x, SCREEN_WIDTH - PLAYER_SIZE.x)
+                player.pos.x += velocity
+            player.pos.x = clamp(0, player.pos.x, SCREEN_WIDTH - player.size.x)
+
+            ball = self.breakout_state.ball
+            if ball.stuck and INPUT.key_pressed(glfw.KEY_SPACE):
+                ball.stuck = False
+                ball.velocity = Vector2f(100, -350)
+
+            if ball.stuck:
+                ball.pos.x = player.pos.x + player.size.x/2 - ball.radius
+                ball.pos.y = player.pos.y - player.size.y/2 - ball.radius
+                ball.velocity.x = 0
+                ball.velocity.y = 0
+            ball.pos += ball.velocity * dt
+            if ball.pos.x <= 0:
+                ball.pos.x = 0
+                ball.velocity.x *= -1
+            if ball.pos.x + ball.radius * 2 >= SCREEN_WIDTH:
+                ball.pos.x = SCREEN_WIDTH - ball.radius * 2
+                ball.velocity.x *= -1
+            if ball.pos.y <= 0:
+                ball.pos.y = 0
+                ball.velocity.y *= -1
+            
 
     def render(self):
         sprites = []
